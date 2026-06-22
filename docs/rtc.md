@@ -1,0 +1,54 @@
+# Real-Time Chunking (RTC) for DynamicVLA streaming
+
+RTC makes a newly generated action chunk continuous with the actions already
+committed for execution, reducing discontinuities at chunk boundaries during
+streaming inference. It is an inference-time method (no retraining) applied
+inside the flow-matching denoising loop, and is **opt-in**.
+
+## Modes (`rtc_mode` in the policy config)
+
+- `off` (default): the original index-splice merge. Unchanged behavior.
+- `softmask`: closed-form RePaint-style blend each Euler step. The previously
+  committed chunk is forward-noised and blended into `x_t` with the RTC
+  exponential soft-mask weights. No gradients; negligible extra latency.
+- `pigdm`: RTC's PiGDM guidance. Each step computes a vector-Jacobian product
+  (autodiff) that nudges the clean-data estimate toward the committed chunk,
+  with the guidance weight clipped by `rtc_beta`. Most faithful to the paper;
+  higher per-step cost.
+
+## Enabling
+
+RTC only applies during streaming inference (`enable_streaming=True`,
+`scripts/inference.py -s`). Set in the checkpoint's `config.json`:
+
+```json
+{ "rtc_mode": "softmask", "rtc_beta": 5.0, "rtc_delay_buffer_size": 8 }
+```
+
+## How it works (data flow)
+
+1. The main process snapshots the currently queued (absolute) actions, their
+   start index, and a conservative delay estimate (max of recent realized
+   skips), and ships them to the streaming worker via `q_in["rtc"]`.
+2. The worker re-expresses that chunk as a delta-space, normalized, padded
+   inpainting target aligned to the new chunk's indices, and computes the
+   soft-mask weights (frozen for the first `d` = delay actions, exponential
+   decay over the overlap, zero beyond the previous chunk).
+3. `sample_actions` applies the target during denoising (`softmask` blend or
+   `pigdm` guidance).
+
+## Validating in sim
+
+Run `simulations/evaluate.py` against `scripts/inference.py -s` once per mode
+and compare success rates and `avg_path_length` (smoother trajectories are
+shorter / less jerky). Use `inference.py -o <dir>` to dump per-step actions
+for seam inspection.
+
+## Caveats
+
+- `pigdm` increases inference latency (autodiff per step); on a latency-bound
+  setup this can widen the very seams RTC is trying to close. Prefer `softmask`
+  unless seam quality is inadequate.
+- RTC trades reactivity for smoothness: frozen actions cannot react to new
+  observations within the delay window. On highly dynamic objects, validate
+  that success rate does not regress vs `off`.
