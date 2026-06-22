@@ -445,8 +445,41 @@ class DynamicVLAPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def _build_inpaint_target(
+        self,
+        prev_actions_abs: torch.Tensor,
+        latest_state_abs: torch.Tensor,
+        shift: int,
+        freeze: int,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Convert the previously committed (absolute) chunk into a normalized,
+        padded, delta-space inpainting target aligned to the new chunk's indices,
+        plus the per-position soft-masking weights.
+        """
+        chunk_size = self.config.chunk_size
+        n_delta_dims = prev_actions_abs.shape[-1] - 1  # gripper (last) stays absolute
+        target, overlap = rtc.align_prev_chunk(
+            prev_actions_abs.float(),
+            latest_state_abs.float(),
+            shift=shift,
+            chunk_size=chunk_size,
+            n_delta_dims=n_delta_dims,
+        )
+        if overlap == 0:
+            return None, None
+
+        # Normalize in the same (delta) space the model operates in, then pad.
+        target = self.normalize_targets({ACTION: target})[ACTION]
+        target = pad_vector(target, self.config.max_action_dim)
+        weights = rtc.compute_rtc_weights(chunk_size, freeze=freeze, overlap=overlap)
+        return target.unsqueeze(0), weights
+
     def _get_action_chunk(
-        self, batch: dict[str, torch.Tensor], noise: torch.Tensor | None = None
+        self,
+        batch: dict[str, torch.Tensor],
+        noise: torch.Tensor | None = None,
+        inpaint_target: torch.Tensor | None = None,
+        inpaint_weights: torch.Tensor | None = None,
     ) -> torch.Tensor:
         tick = time.perf_counter()
         for k in batch:
@@ -458,7 +491,16 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         lang_tokens, lang_masks = self.prepare_language(batch)
 
         actions = self.model.sample_actions(
-            images, img_masks, lang_tokens, lang_masks, state, noise=noise
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            state,
+            noise=noise,
+            rtc_mode=self.config.rtc_mode,
+            inpaint_target=inpaint_target,
+            inpaint_weights=inpaint_weights,
+            rtc_beta=self.config.rtc_beta,
         )
 
         # Unpad actions

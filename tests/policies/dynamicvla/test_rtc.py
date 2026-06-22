@@ -118,3 +118,39 @@ def test_pigdm_coef_clipped_by_beta_near_endpoints():
 def test_pigdm_coef_unclipped_midrange():
     # at t=0.5: ((0.5)^2 + (0.5)^2)/((0.5)(0.5)) = 0.5/0.25 = 2.0 < beta
     assert abs(rtc.pigdm_guidance_coef(time=0.5, beta=5.0) - 2.0) < 1e-6
+
+
+class _StubNormalize:
+    """Identity normalizer standing in for LeRobot's Normalize."""
+    def __call__(self, batch):
+        return batch
+
+
+class _StubPolicy:
+    """Minimal object exposing just what _build_inpaint_target needs."""
+    from policies.dynamicvla.modeling_dynamicvla import DynamicVLAPolicy
+    _build_inpaint_target = DynamicVLAPolicy._build_inpaint_target
+
+    def __init__(self):
+        self.config = DynamicVLAConfig()
+        self.config.__post_init__()
+        self.normalize_targets = _StubNormalize()
+
+
+def test_build_inpaint_target_shapes_and_padding():
+    p = _StubPolicy()
+    H, A = p.config.chunk_size, 7
+    prev = torch.randn(H, A)
+    state = torch.zeros(A)
+    target, weights = p._build_inpaint_target(prev, state, shift=3, freeze=2)
+    assert target.shape == (1, H, p.config.max_action_dim)
+    assert weights.shape == (H,)
+    # padded dims beyond the real action dim are zero
+    assert torch.all(target[0, :, A:] == 0.0)
+
+
+def test_build_inpaint_target_no_overlap_returns_none():
+    p = _StubPolicy()
+    prev = torch.randn(10, 7)
+    target, weights = p._build_inpaint_target(prev, torch.zeros(7), shift=999, freeze=2)
+    assert target is None and weights is None
