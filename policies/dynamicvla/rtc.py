@@ -48,7 +48,9 @@ def align_prev_chunk(
     """
     h_prev, a = prev_actions_abs.shape
     overlap = max(0, min(chunk_size, h_prev - shift))
-    target = torch.zeros(chunk_size, a, dtype=torch.float32)
+    # Match the input device so the (delta) arithmetic below does not mix
+    # CPU/CUDA tensors when called from the streaming worker (state is on GPU).
+    target = torch.zeros(chunk_size, a, dtype=torch.float32, device=prev_actions_abs.device)
     if overlap == 0:
         return target, 0
 

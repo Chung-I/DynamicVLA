@@ -86,6 +86,22 @@ def test_align_prev_chunk_no_overlap():
     assert torch.all(target == 0.0)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_align_prev_chunk_cuda_no_device_mismatch():
+    # Regression: the streaming worker passes CUDA tensors. The output target
+    # must be built on the same device, or the delta subtraction raises
+    # "Expected all tensors to be on the same device" (crashed the RTC worker).
+    dev = "cuda"
+    prev = torch.arange(50 * 7, dtype=torch.float32, device=dev).reshape(50, 7)
+    state = torch.full((7,), 10.0, device=dev)
+    target, overlap = rtc.align_prev_chunk(prev, state, shift=3, chunk_size=50, n_delta_dims=6)
+    assert overlap == 47
+    assert target.device.type == "cuda"
+    expected_row0 = prev[3].clone()
+    expected_row0[:6] -= 10.0
+    assert torch.allclose(target[0], expected_row0)
+
+
 def test_softmask_blend_frozen_region_at_data_time_equals_target():
     B, H, A = 1, 50, 7
     x_t = torch.randn(B, H, A)
