@@ -393,20 +393,20 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         while True:
             try:
                 latest_obs = q_in.get("obs")
-                rtc_entry = q_in.get("rtc")
-            except:
+            except Exception:
                 latest_obs = None
-                rtc_entry = None
 
             if latest_obs is None:
                 continue
 
-            rtc = rtc_entry
+            rtc = latest_obs[2] if len(latest_obs) > 2 else None
             q_in.clear()
             noise = latest_obs[1].cuda() if latest_obs[1] is not None else None
             batch = {}
             for k, v in latest_obs[0].items():
-                batch[k] = v.cuda() if (isinstance(v, torch.Tensor) and torch.cuda.is_available()) else v
+                batch[k] = (
+                    v.cuda() if (isinstance(v, torch.Tensor) and torch.cuda.is_available()) else v
+                )
 
             index = batch["index"]
             latest_state = batch[OBS_STATE][:, -1:, :]
@@ -418,8 +418,10 @@ class DynamicVLAPolicy(PreTrainedPolicy):
                 if shift >= 0:
                     state_abs = latest_state[0, 0]
                     inpaint_target, inpaint_weights = vla_model._build_inpaint_target(
-                        prev_actions_abs.to(state_abs.device), state_abs,
-                        shift=shift, freeze=freeze,
+                        prev_actions_abs.to(state_abs.device),
+                        state_abs,
+                        shift=shift,
+                        freeze=freeze,
                     )
 
             batch = vla_model._prepare_batch(batch)
@@ -586,10 +588,7 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         assert "index" in batch
         # Put the latest observation into the input dict
         rtc_payload = self._build_rtc_payload(batch["index"])
-        update = {"obs": (batch, noise)}
-        if rtc_payload is not None:
-            update["rtc"] = rtc_payload
-        self.q_in.update(update)
+        self.q_in.update({"obs": (batch, noise, rtc_payload)})
 
         actions = None
         if not self.q_out.empty():
@@ -1223,6 +1222,9 @@ class VLAFlowMatching(torch.nn.Module):
 
         do_rtc = rtc_mode != "off" and inpaint_target is not None
         if do_rtc:
+            assert inpaint_weights is not None, (
+                "inpaint_weights must be provided when inpaint_target is set"
+            )
             inpaint_target = inpaint_target.to(device=device, dtype=noise.dtype)
             inpaint_weights = inpaint_weights.to(device=device)
 
@@ -1232,16 +1234,30 @@ class VLAFlowMatching(torch.nn.Module):
             expanded_time = time.expand(bsize)
             if do_rtc and rtc_mode == "pigdm":
                 # Guided (PiGDM) step: needs gradients through the suffix path.
-                with torch.enable_grad():
-                    x_in = x_t.detach().requires_grad_(True)
-                    v_t = self.denoise_step(
-                        prefix_pad_masks, past_key_values, x_in, expanded_time
+                try:
+                    with torch.enable_grad():
+                        x_in = x_t.detach().requires_grad_(True)
+                        v_t = self.denoise_step(
+                            prefix_pad_masks, past_key_values, x_in, expanded_time
+                        )
+                        a_hat = x_in - time * v_t  # clean-data estimate
+                        weighted = inpaint_weights.view(1, -1, 1) * (
+                            inpaint_target - a_hat
+                        )
+                        (g,) = torch.autograd.grad(a_hat, x_in, grad_outputs=weighted)
+                    coef = rtc.pigdm_guidance_coef(float(time), rtc_beta)
+                    x_t = x_t + dt * v_t.detach() + coef * g.detach()
+                except RuntimeError as e:
+                    logging.warning(
+                        "RTC pigdm guidance failed (%s); falling back to a plain"
+                        " Euler step for this denoise iteration.",
+                        e,
                     )
-                    a_hat = x_in - time * v_t  # clean-data estimate
-                    weighted = inpaint_weights.view(1, -1, 1) * (inpaint_target - a_hat)
-                    (g,) = torch.autograd.grad(a_hat, x_in, grad_outputs=weighted)
-                coef = rtc.pigdm_guidance_coef(float(time), rtc_beta)
-                x_t = (x_t + dt * v_t.detach() + coef * g.detach())
+                    with torch.no_grad():
+                        v_t = self.denoise_step(
+                            prefix_pad_masks, past_key_values, x_t, expanded_time
+                        )
+                    x_t = x_t + dt * v_t
             else:
                 v_t = self.denoise_step(
                     prefix_pad_masks, past_key_values, x_t, expanded_time

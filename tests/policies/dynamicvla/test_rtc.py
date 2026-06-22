@@ -156,6 +156,22 @@ def test_build_inpaint_target_no_overlap_returns_none():
     assert target is None and weights is None
 
 
+def test_build_inpaint_target_delta_values():
+    p = _StubPolicy()
+    H = p.config.chunk_size
+    A = 7
+    prev = torch.arange(H * A, dtype=torch.float32).reshape(H, A)
+    state = torch.full((A,), 10.0)
+    shift = 4
+    target, _ = p._build_inpaint_target(prev, state, shift=shift, freeze=2)
+    # row i of the (unpadded slice of the) target corresponds to prev[shift + i]
+    expected_row0 = prev[shift].clone()
+    expected_row0[: A - 1] -= 10.0  # delta on non-gripper dims
+    assert torch.allclose(target[0, 0, :A], expected_row0)
+    # gripper (last real dim) stays absolute
+    assert target[0, 0, A - 1] == prev[shift, A - 1]
+
+
 from collections import deque
 
 
