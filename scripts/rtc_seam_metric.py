@@ -5,6 +5,12 @@ import argparse
 import glob
 import os
 import pickle
+import sys
+
+# The dump pickles embed the DynamicVLAConfig object (the "vla" key), so
+# unpickling requires the repo root on sys.path even when this script is run
+# directly from scripts/ (where sys.path[0] would otherwise be scripts/).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
 
 import numpy as np
 
