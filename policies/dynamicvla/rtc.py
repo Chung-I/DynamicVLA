@@ -55,3 +55,33 @@ def align_prev_chunk(
     target[:overlap] = prev_actions_abs[shift : shift + overlap]
     target[:overlap, :n_delta_dims] -= latest_state_abs[:n_delta_dims]
     return target, overlap
+
+
+def apply_softmask_inpaint(
+    x_t: torch.Tensor,
+    noise: torch.Tensor,
+    target: torch.Tensor,
+    weights: torch.Tensor,
+    time: torch.Tensor,
+) -> torch.Tensor:
+    """RePaint-style blend toward the forward-noised known trajectory.
+
+    x_known(time) = time*noise + (1 - time)*target
+    x_t <- (1 - w)*x_t + w*x_known(time)   (broadcast w over action dims)
+    """
+    if target.ndim == 2:
+        target = target.unsqueeze(0)
+    w = weights.view(1, -1, 1).to(x_t.dtype)
+    x_known = time * noise + (1.0 - time) * target
+    return (1.0 - w) * x_t + w * x_known
+
+
+def pigdm_guidance_coef(time: float, beta: float) -> float:
+    """RTC guidance clip min(beta, (1-tau)/(tau*r^2)) in DynamicVLA flow-time.
+
+    With tau = 1 - time and r^2 = (1-tau)^2/(tau^2 + (1-tau)^2), the factor
+    (1-tau)/(tau*r^2) simplifies to ((1-t)^2 + t^2) / ((1-t)*t).
+    """
+    t = min(max(time, 1e-4), 1.0 - 1e-4)
+    factor = ((1.0 - t) ** 2 + t ** 2) / ((1.0 - t) * t)
+    return min(beta, factor)
