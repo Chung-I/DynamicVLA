@@ -49,6 +49,15 @@ class DynamicVLAConfig(PreTrainedConfig):
     use_delta_action: bool = True
     # Streaming inference
     enable_streaming: bool = False
+    # RTC (Real-Time Chunking) guided inpainting for streaming inference.
+    # "off"      -> existing index-splice merge (default, unchanged behavior)
+    # "softmask" -> closed-form RePaint-style blend (no gradients)
+    # "pigdm"    -> RTC's PiGDM guidance via vector-Jacobian product (autodiff)
+    rtc_mode: str = "off"
+    # Guidance-weight clip (the beta in min(beta, (1-tau)/(tau*r^2))). Only used by pigdm.
+    rtc_beta: float = 5.0
+    # Number of recent realized inference delays kept to estimate the freeze count d.
+    rtc_delay_buffer_size: int = 8
     # Multi-timestep fusion ("conv" or "attn")
     temporal_fusion: str = "conv"
     # Tokenizer
@@ -111,6 +120,11 @@ class DynamicVLAConfig(PreTrainedConfig):
             raise NotImplementedError(
                 "`use_delta_joint_actions_aloha` is used by dynamicvla for aloha real"
                 " models. It is not ported yet in LeRobot."
+            )
+        if self.rtc_mode not in ("off", "softmask", "pigdm"):
+            raise ValueError(
+                "`rtc_mode` must be one of 'off', 'softmask', 'pigdm'. Got"
+                f" {self.rtc_mode!r}."
             )
 
     def validate_features(self) -> None:
