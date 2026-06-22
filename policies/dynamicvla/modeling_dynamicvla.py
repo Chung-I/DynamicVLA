@@ -32,6 +32,7 @@ from policies.dynamicvla.modeling_fastvlm import (
     FastVLMForConditionalGeneration,
 )
 from policies.dynamicvla.modeling_vlm_with_expert import VLMWithExpertModel
+from policies.dynamicvla import rtc
 
 # Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
 _VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
@@ -1119,9 +1120,19 @@ class VLAFlowMatching(torch.nn.Module):
         return prefix_pad_masks, past_key_values
 
     def sample_actions(
-        self, images, img_masks, lang_tokens, lang_masks, state, noise=None
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise=None,
+        rtc_mode="off",
+        inpaint_target=None,
+        inpaint_weights=None,
+        rtc_beta=5.0,
     ) -> torch.Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)."""
         bsize = state.shape[0]
         device = state.device
         if noise is None:
@@ -1134,19 +1145,39 @@ class VLAFlowMatching(torch.nn.Module):
         dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
+        do_rtc = rtc_mode != "off" and inpaint_target is not None
+        if do_rtc:
+            inpaint_target = inpaint_target.to(device=device, dtype=noise.dtype)
+            inpaint_weights = inpaint_weights.to(device=device)
+
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
-            # Euler step
-            x_t += dt * v_t
-            time += dt
+            if do_rtc and rtc_mode == "pigdm":
+                # Guided (PiGDM) step: needs gradients through the suffix path.
+                with torch.enable_grad():
+                    x_in = x_t.detach().requires_grad_(True)
+                    v_t = self.denoise_step(
+                        prefix_pad_masks, past_key_values, x_in, expanded_time
+                    )
+                    a_hat = x_in - time * v_t  # clean-data estimate
+                    weighted = inpaint_weights.view(1, -1, 1) * (inpaint_target - a_hat)
+                    (g,) = torch.autograd.grad(a_hat, x_in, grad_outputs=weighted)
+                coef = rtc.pigdm_guidance_coef(float(time), rtc_beta)
+                x_t = (x_t + dt * v_t.detach() + coef * g.detach())
+            else:
+                v_t = self.denoise_step(
+                    prefix_pad_masks, past_key_values, x_t, expanded_time
+                )
+                x_t = x_t + dt * v_t
+
+            time = time + dt
+
+            if do_rtc and rtc_mode == "softmask":
+                x_t = rtc.apply_softmask_inpaint(
+                    x_t, noise, inpaint_target, inpaint_weights, time
+                )
 
         return x_t
 
