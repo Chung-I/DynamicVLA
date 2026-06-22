@@ -1246,7 +1246,10 @@ class VLAFlowMatching(torch.nn.Module):
                         )
                         (g,) = torch.autograd.grad(a_hat, x_in, grad_outputs=weighted)
                     coef = rtc.pigdm_guidance_coef(float(time), rtc_beta)
-                    x_t = x_t + dt * v_t.detach() + coef * g.detach()
+                    # Scale the guidance by the integration step size (|dt|) so it
+                    # is folded into the velocity like RTC, rather than applied at
+                    # full magnitude every step (which diverges over few steps).
+                    x_t = x_t + dt * v_t.detach() + (-dt) * coef * g.detach()
                 except RuntimeError as e:
                     logging.warning(
                         "RTC pigdm guidance failed (%s); falling back to a plain"

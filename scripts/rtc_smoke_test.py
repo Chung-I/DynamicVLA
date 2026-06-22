@@ -120,11 +120,17 @@ def main():
     )
     if not frozen_ok:
         failures.append("softmask frozen region does not equal the target")
-    # zero-weight region (beyond overlap) must be untouched vs baseline
-    tail_ok = torch.allclose(sm[0, args.overlap :], base[0, args.overlap :], atol=args.atol)
-    logging.info("softmask: zero-weight tail unchanged vs off=%s", tail_ok)
-    if not tail_ok:
-        failures.append("softmask altered the zero-weight (beyond-overlap) region")
+    # NOTE: the beyond-overlap region is NOT directly blended (weight 0), but it
+    # is still expected to differ from the baseline end-to-end: the action tokens
+    # attend to each other in the expert, so pinning the frozen region changes the
+    # velocity predicted for the tail at later steps. The isolated-blend invariant
+    # (tail untouched per-step) is covered by the CPU unit test; here we only
+    # report the magnitude for visibility.
+    tail_drift = (sm[0, args.overlap :] - base[0, args.overlap :]).abs().max().item()
+    logging.info(
+        "softmask: beyond-overlap drift vs off = %.3e (expected nonzero via attention)",
+        tail_drift,
+    )
 
     # --- pigdm: must run, and move weighted region closer to target than baseline ---
     try:
@@ -149,8 +155,8 @@ def main():
             print("  FAIL:", f)
         print("=======================================================")
         sys.exit(1)
-    print("  PASS: softmask pins the frozen region, leaves the tail untouched,")
-    print("        and pigdm reduces the weighted distance to the target.")
+    print("  PASS: softmask pins the frozen region to the target, and pigdm")
+    print("        reduces the weighted distance to the target.")
     print("=======================================================")
 
 
