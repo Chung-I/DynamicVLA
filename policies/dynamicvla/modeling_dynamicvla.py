@@ -344,6 +344,7 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
         self._obs_index = 0
         self._action_index = 0
+        self._rtc_delay_buf = deque(maxlen=self.config.rtc_delay_buffer_size)
         if hasattr(self, "q_in"):
             self.q_in.clear()  # Clear the input queue
         if hasattr(self, "q_out") and not self.q_out.empty():
@@ -392,26 +393,37 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         while True:
             try:
                 latest_obs = q_in.get("obs")
+                rtc_entry = q_in.get("rtc")
             except:
                 latest_obs = None
+                rtc_entry = None
 
             if latest_obs is None:
                 continue
 
+            rtc = rtc_entry
             q_in.clear()
             noise = latest_obs[1].cuda() if latest_obs[1] is not None else None
             batch = {}
             for k, v in latest_obs[0].items():
-                if isinstance(v, torch.Tensor):
-                    batch[k] = v.cuda() if torch.cuda.is_available() else v
-                else:
-                    batch[k] = v
+                batch[k] = v.cuda() if (isinstance(v, torch.Tensor) and torch.cuda.is_available()) else v
 
             index = batch["index"]
             latest_state = batch[OBS_STATE][:, -1:, :]
-            batch = vla_model._prepare_batch(batch)
 
-            actions = vla_model._get_action_chunk(batch, noise)
+            inpaint_target, inpaint_weights = None, None
+            if rtc is not None and vla_model.config.rtc_mode != "off":
+                prev_actions_abs, prev_start_index, freeze = rtc
+                shift = int(index) - int(prev_start_index)
+                if shift >= 0:
+                    state_abs = latest_state[0, 0]
+                    inpaint_target, inpaint_weights = vla_model._build_inpaint_target(
+                        prev_actions_abs.to(state_abs.device), state_abs,
+                        shift=shift, freeze=freeze,
+                    )
+
+            batch = vla_model._prepare_batch(batch)
+            actions = vla_model._get_action_chunk(batch, noise, inpaint_target, inpaint_weights)
             if vla_model.config.use_delta_action:
                 action_dim = actions.shape[-1] - 1
                 actions[..., :action_dim] += latest_state[..., :action_dim]
@@ -549,6 +561,23 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         else:
             return self._get_non_streaming_action(batch, noise)
 
+    def _build_rtc_payload(self, current_index: int):
+        """Snapshot the currently committed chunk + delay estimate for the worker.
+
+        Returns (prev_actions_abs_cpu, prev_start_index, freeze) or None.
+        """
+        if self.config.rtc_mode == "off":
+            return None
+        queued = list(self._queues[ACTION])
+        if not queued:
+            return None
+
+        prev_start_index = queued[0]["index"]
+        # Each queued entry's "action" is (batch_size, action_dim); take batch 0.
+        prev_actions = torch.stack([q["action"][0] for q in queued], dim=0).cpu()
+        freeze = max(self._rtc_delay_buf) if self._rtc_delay_buf else 0
+        return (prev_actions, prev_start_index, int(freeze))
+
     @torch.no_grad()
     def _get_streaming_action(
         self, batch: dict[str, torch.Tensor], noise: torch.Tensor | None = None
@@ -556,7 +585,11 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         # NOTE: This function does not do any GPU computation.
         assert "index" in batch
         # Put the latest observation into the input dict
-        self.q_in.update({"obs": (batch, noise)})
+        rtc_payload = self._build_rtc_payload(batch["index"])
+        update = {"obs": (batch, noise)}
+        if rtc_payload is not None:
+            update["rtc"] = rtc_payload
+        self.q_in.update(update)
 
         actions = None
         if not self.q_out.empty():
@@ -566,6 +599,7 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         if actions is not None:
             assert actions["actions"].size(0) == self.config.n_action_steps
             skip_n_actions = batch["index"] - actions["index"]
+            self._rtc_delay_buf.append(max(0, skip_n_actions))
             logging.debug(
                 "Curr. Step: %03d; Act. Step: %03d; Skip Steps: %03d"
                 % (batch["index"], actions["index"], skip_n_actions)

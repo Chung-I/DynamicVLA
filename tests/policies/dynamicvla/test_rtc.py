@@ -154,3 +154,33 @@ def test_build_inpaint_target_no_overlap_returns_none():
     prev = torch.randn(10, 7)
     target, weights = p._build_inpaint_target(prev, torch.zeros(7), shift=999, freeze=2)
     assert target is None and weights is None
+
+
+from collections import deque
+
+
+class _StreamStub:
+    from policies.dynamicvla.modeling_dynamicvla import DynamicVLAPolicy
+    _build_rtc_payload = DynamicVLAPolicy._build_rtc_payload
+
+    def __init__(self, rtc_mode, queued, delays):
+        self.config = DynamicVLAConfig()
+        self.config.rtc_mode = rtc_mode
+        self.config.__post_init__()
+        self._queues = {"action": deque(queued)}
+        self._rtc_delay_buf = deque(delays, maxlen=8)
+
+
+def test_rtc_payload_none_when_off_or_empty():
+    assert _StreamStub("off", [{"index": 5, "action": torch.zeros(1, 7)}], [2])._build_rtc_payload(6) is None
+    assert _StreamStub("softmask", [], [2])._build_rtc_payload(6) is None
+
+
+def test_rtc_payload_contents():
+    from lerobot.constants import ACTION
+    q = [{"index": 5 + i, "action": torch.full((1, 7), float(i))} for i in range(3)]
+    stub = _StreamStub("softmask", q, [1, 3, 2])
+    prev_actions, start, freeze = stub._build_rtc_payload(current_index=7)
+    assert start == 5
+    assert prev_actions.shape == (3, 7)
+    assert freeze == 3  # conservative = max of buffer
