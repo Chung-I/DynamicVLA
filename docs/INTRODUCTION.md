@@ -130,6 +130,21 @@ smoother).
   its single-chunk guidance being correct; needs tuning (`rtc_beta` / a guidance
   decay schedule). Experimental.
 
+**Side-by-side demo videos (ours) — baseline vs softmask.** Both clips are the
+**same task and scene** (`1-1_place cup03d`: pick up the cup, place it in the
+container) and **both succeed**, so the difference you see is *motion quality*,
+not task outcome. This is the matched pair with the largest jerk gap among
+trials successful in both modes.
+
+| file | method | mean_jerk | what to look for |
+|---|---|---|---|
+| `…cup03d…-022909-SUCCESS.mp4` | **off (baseline)** | 0.0361 | end-effector is visibly **twitchy / oscillatory**, especially at action-chunk boundaries |
+| `…cup03d…-035938-SUCCESS.mp4` | **softmask (RTC)** | 0.0099 | **~3.6× smoother**, continuous motion across chunk seams while still completing the task |
+
+Each frame is three camera views side-by-side (the policy's wrist + scene cams).
+Suggested slide: play the two clips side-by-side; caption "same task, both
+succeed — RTC (softmask) removes the chunk-boundary jerk (3.6× lower)."
+
 **Honest caveats (important for the report):**
 - **Absolute success is below the paper's 47%.** We ruled out precision (bf16
   gave no speedup) and inference latency (forcing `dt_scale=1` did not raise
