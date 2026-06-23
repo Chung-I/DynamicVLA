@@ -126,6 +126,18 @@ smoother).
 - **`softmask` is the validated win:** smoother trajectories (−37% jerk),
   fewer steps and faster completion on tasks both modes solve, and slightly
   higher success — in the low-latency regime RTC is designed for. Recommended.
+- **The jerk reduction is statistically significant** (paired test, same
+  checkpoint/harness/envs/observations across modes): softmask is smoother in
+  **83% of episodes** (148/178); **paired Wilcoxon p ≈ 1.4e-18**, paired t
+  p ≈ 1.4e-19, **Cohen's dz ≈ 0.77**. It holds under the conservative env-level
+  test (collapse the 2 trials/env → n=89): **77/89 envs smoother, Wilcoxon
+  p ≈ 8e-13, dz ≈ 1.07 (large effect)**. (Success-rate differences, by contrast,
+  are within noise at this trial count — the smoothness claim is the strong one.)
+- **Steps/time reduction is also significant, but weaker evidence:** on tasks
+  both modes solve (n=21 paired), softmask uses ~10% fewer steps and ~9% less
+  wall-clock — significant by paired Wilcoxon (**p ≈ 0.002–0.003**, survives
+  Bonferroni), small-to-medium effect (dz ≈ 0.45); the paired t-test is borderline
+  (p ≈ 0.05–0.06) at this small n.
 - **`pigdm` currently regresses** end-to-end (lower success, +47% jerk) despite
   its single-chunk guidance being correct; needs tuning (`rtc_beta` / a guidance
   decay schedule). Experimental.

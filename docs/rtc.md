@@ -94,3 +94,19 @@ executed end-effector **position** stream `p` of shape `(T, 3)`:
 This is a **whole-trajectory** position-jerk proxy (not seam-localized — the
 dumps don't record chunk-boundary indices), but the softmask↓ / pigdm↑ deltas
 are large and consistent enough to be meaningful.
+
+### Statistical significance (softmask vs off, paired)
+
+Same checkpoint/harness/envs/observations across modes, so episodes are matched
+by (env, trial) and compared with paired tests:
+
+- **Jerk reduction (−37%): strongly significant.** Episode-level (n=178):
+  softmask smoother in 148/178 (83%); paired Wilcoxon p ≈ 1.4e-18, t p ≈ 1.4e-19,
+  Cohen's dz ≈ 0.77. Conservative env-level (n=89, trials collapsed): 77/89
+  envs smoother, Wilcoxon p ≈ 8e-13, dz ≈ 1.07 (large effect).
+- **Steps / execution-time reduction (~10%): significant but weaker.** On
+  both-success tasks (n=21 paired): softmask better in 17–18/21; paired Wilcoxon
+  p ≈ 0.002–0.003 (survives Bonferroni for 4 metrics), dz ≈ 0.45 (small-medium);
+  the paired t-test is borderline (p ≈ 0.05–0.06) at this small n.
+- **Success-rate difference (24.2% vs 20.8%):** within noise at 2 trials/env —
+  not claimed as significant.
