@@ -52,3 +52,25 @@ for seam inspection.
 - RTC trades reactivity for smoothness: frozen actions cannot react to new
   observations within the delay window. On highly dynamic objects, validate
   that success rate does not regress vs `off`.
+
+## Empirical findings (DOM sim, Isaac Sim, RTX 5090, paper-regime latency)
+
+Released `hzxie/dynamic-vla-DOM` checkpoint, all 89 DOM test envs × 2 trials/mode
+(jerk via `scripts/rtc_seam_metric.py`, EE-position 2nd difference):
+
+| mode      | success | mean_jerk     | p95_jerk      |
+|-----------|---------|---------------|---------------|
+| off       | 20.8%   | 0.0263        | 0.1082        |
+| softmask  | 24.2%   | 0.0166 (-37%) | 0.0623 (-42%) |
+| pigdm     | 19.7%   | 0.0387 (+47%) | 0.2022 (+87%) |
+
+- **`softmask` is recommended**: higher success AND markedly smoother
+  trajectories (lower jerk) than `off`, in the low-latency regime RTC targets.
+- **`pigdm` currently regresses** end-to-end (lower success, higher jerk) even
+  though its single-chunk guidance reduces distance-to-target. Treat as
+  experimental — needs `rtc_beta` tuning / a guidance decay schedule; not for use as-is.
+- **Absolute success vs the paper (47.06%):** the gap is *not* precision (bf16
+  gave no speedup) nor inference latency (forcing `dt_scale=1` did not raise
+  success). The residual ~2x likely reflects released-checkpoint / eval-protocol
+  differences not recoverable from public artifacts. The comparison above is
+  relative (same checkpoint + harness + envs) and is unaffected by it.
