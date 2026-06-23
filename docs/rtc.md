@@ -98,15 +98,31 @@ are large and consistent enough to be meaningful.
 ### Statistical significance (softmask vs off, paired)
 
 Same checkpoint/harness/envs/observations across modes, so episodes are matched
-by (env, trial) and compared with paired tests:
+by (env, trial) and compared with paired tests. "softmask better" = number of
+paired episodes where softmask's value is lower (smoother/fewer/faster).
 
-- **Jerk reduction (−37%): strongly significant.** Episode-level (n=178):
-  softmask smoother in 148/178 (83%); paired Wilcoxon p ≈ 1.4e-18, t p ≈ 1.4e-19,
-  Cohen's dz ≈ 0.77. Conservative env-level (n=89, trials collapsed): 77/89
-  envs smoother, Wilcoxon p ≈ 8e-13, dz ≈ 1.07 (large effect).
-- **Steps / execution-time reduction (~10%): significant but weaker.** On
-  both-success tasks (n=21 paired): softmask better in 17–18/21; paired Wilcoxon
-  p ≈ 0.002–0.003 (survives Bonferroni for 4 metrics), dz ≈ 0.45 (small-medium);
-  the paired t-test is borderline (p ≈ 0.05–0.06) at this small n.
-- **Success-rate difference (24.2% vs 20.8%):** within noise at 2 trials/env —
-  not claimed as significant.
+**Smoothness — all matched episodes (n=178; jerk is defined regardless of success):**
+
+| metric    | off    | softmask | Δ    | softmask better | Wilcoxon p | t-test p | dz   |
+|-----------|--------|----------|------|-----------------|------------|----------|------|
+| mean_jerk | 0.0263 | 0.0166   | −37% | 148/178 (83%)   | 1.4e-18    | 1.4e-19  | 0.77 |
+| p95_jerk  | 0.1082 | 0.0623   | −42% | 146/178 (82%)   | 5.3e-19    | 1.4e-18  | 0.74 |
+
+Strongly significant (large effect). Holds under the conservative env-level test
+(collapse 2 trials/env → n=89): mean_jerk smoother in 77/89 envs, Wilcoxon
+p ≈ 8e-13, dz ≈ 1.07.
+
+**Steps / execution time — both-success tasks only (n=21):**
+
+| metric            | off    | softmask | Δ    | softmask better | Wilcoxon p | t-test p | dz   |
+|-------------------|--------|----------|------|-----------------|------------|----------|------|
+| action steps      | 156.5  | 140.9    | −10% | 17/21           | 0.003      | 0.048    | 0.46 |
+| policy actions    | 149.1  | 133.4    | −11% | 17/21           | 0.003      | 0.046    | 0.46 |
+| exec time (sim)   | 6.26 s | 5.63 s   | −10% | 17/21           | 0.003      | 0.048    | 0.46 |
+| exec time (wall)  | 11.22 s| 10.17 s  | −9%  | 18/21           | 0.002      | 0.062    | 0.43 |
+
+Significant by paired Wilcoxon (p ≤ 0.003, survives Bonferroni for 4 metrics),
+small-to-medium effect; paired t-test borderline (p ≈ 0.05–0.06) at this small n.
+
+**Success rate (24.2% vs 20.8%):** within noise at 2 trials/env — not claimed
+as significant.
