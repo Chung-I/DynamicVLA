@@ -485,6 +485,11 @@ class DynamicVLAPolicy(PreTrainedPolicy):
         # Normalize in the same (delta) space the model operates in, then pad.
         target = self.normalize_targets({ACTION: target})[ACTION]
         target = pad_vector(target, self.config.max_action_dim)
+        d = min(freeze, overlap)  # frozen region is clamped to the overlap
+        logging.info(
+            "[RTC] H=%d frozen=%d changeable=%d fresh=%d (overlap=%d shift=%d)",
+            chunk_size, d, max(0, overlap - d), chunk_size - overlap, overlap, shift,
+        )
         weights = rtc.compute_rtc_weights(chunk_size, freeze=freeze, overlap=overlap)
         return target.unsqueeze(0), weights
 
