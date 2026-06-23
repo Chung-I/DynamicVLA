@@ -174,6 +174,18 @@ softmask is essentially free (~5%); pigdm's per-step autodiff costs 2.5× more
 inference → 2.5× more latency (GPU-independent) — a real handicap behind its
 regression. (Caveat: on a shared GPU, clean rendering slows inference too — the
 design assumes sim and policy can be decoupled.)
+
+**RTC chunk split (measured, 5090).** Mapping our run onto the RTC soft-mask
+figure — chunk H=20, partitioned per-inference from the measured pipeline delay:
+
+| region | frozen (d) | changeable (H−d−s) | fresh (s) |
+|---|---|---|---|
+| measured | ≈ 6–7 | ≈ 4–10 | ≈ 4–9 |
+
+So ~6–7 of 20 actions are hard-frozen; the rest is the exp-decay blend over the
+overlap — softmask's smoothing is mostly the soft blend, not the freeze. `d` =
+the full obs→compute→queue→execute pipeline depth (hence > the per-step `dt_scale≈2`),
+and scales with latency (slower machines → larger frozen region).
 - **`pigdm` currently regresses** end-to-end (lower success, +47% jerk) despite
   its single-chunk guidance being correct; needs tuning (`rtc_beta` / a guidance
   decay schedule). Experimental.

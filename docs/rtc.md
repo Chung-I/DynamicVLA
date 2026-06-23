@@ -176,3 +176,28 @@ Measured (5090 run, n_chunks 0.2–16k/mode):
   slows inference → more latency (e.g., cml18 clean run: inf ~0.41 s → ~10 steps).
   Running the simulator and policy on separate GPUs (or the paper's A6000)
   decouples them as the design intends.
+
+### RTC chunk split, measured (5090 softmask run)
+
+The soft-mask weight schedule (the figure's guidance-weight curve) partitions the
+**H = 20**-action chunk into frozen / changeable / fresh. The frozen count `d`
+and the `overlap` are set **per inference** from the measured pipeline delay
+(logged via the `[RTC]` line in `_build_inpaint_target`):
+
+| region (figure)       | meaning                                          | measured (H=20) |
+|-----------------------|--------------------------------------------------|-----------------|
+| **frozen** (`d`)      | inference delay; weight = 1; executes as-is      | **≈ 6–7**       |
+| **changeable** (`H−d−s`) | overlaps prev chunk; exp-decay weight          | **≈ 4–10**      |
+| **fresh** (`s`)       | beyond prev chunk; weight = 0; freshly generated | **≈ 4–9**       |
+
+(varies chunk-to-chunk as the action queue drains; `overlap` = frozen+changeable
+≈ 11–16, logged `shift` ≈ 0.)
+
+**Conclusion.** At the 5090's latency, only **~6–7 of the 20 actions are hard-frozen**;
+the rest of the chunk is dominated by the **exp-decay blend over the overlap** — so
+softmask's smoothing comes mostly from the soft blend, not the freeze. Note
+`d ≈ 6–7` exceeds the per-step `dt_scale ≈ 2` because `d = max recent
+skip_n_actions` measures the **full obs→compute→queue→execute pipeline depth**, not
+a single step. `d` scales with latency, so slower-inference machines (e.g. the
+cml18 clean run, ~10-step latency) produce a **larger** frozen region — being
+captured separately via the same `[RTC]` logging.
