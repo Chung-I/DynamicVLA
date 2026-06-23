@@ -1,0 +1,156 @@
+# Introduction: DynamicVLA, the DOM task, and RTC
+
+> Source material for a progress-report slide deck. Sections are self-contained;
+> numbers are cited to their source (the DynamicVLA paper, the RTC paper, or
+> *this project's* experiments). Where a figure comes from our own runs it is
+> labelled **(ours)** and carries its caveats.
+
+---
+
+## 1. DynamicVLA — a compact VLA for *dynamic* object manipulation
+
+**The problem.** Vision-Language-Action (VLA) models do well on *static*
+manipulation but struggle when the target object keeps moving. The core issue is
+**inference latency**: while the model reasons over an observation, the world
+keeps changing, so by the time an action is produced it can already be stale —
+perception and execution desynchronize. Handling moving objects needs *temporal
+anticipation* and *continuous control*, not just a better single-shot policy.
+
+**The model.** DynamicVLA (Xie et al., S-Lab @ NTU; arXiv 2601.22153) is a
+**compact ~0.4B-parameter VLA** designed for low latency:
+- **Vision encoder:** FastViT (convolutional) for efficient spatial compression
+  and fast inference.
+- **Language/backbone:** SmolLM2-360M, truncated to 16 transformer layers.
+- **Action head:** a conditional **flow-matching** transformer ("action expert")
+  that denoises an action chunk (DOM checkpoint: chunk size 20, 10 Euler denoise
+  steps, dual 384×384 cameras `wrist_cam`+`opst_cam`, 2 observation timesteps).
+
+**Two systems-level ideas that make it "dynamic":**
+- **Continuous (pipelined) inference** — overlap reasoning with execution so the
+  robot never stalls waiting for the next chunk.
+- **Latent-aware action streaming** — discard stale actions and prioritize the
+  freshest predictions to keep perception and action aligned.
+
+Reported efficiency: ~88 Hz on an NVIDIA RTX A6000.
+
+---
+
+## 2. The DOM task — Dynamic Object Manipulation benchmark
+
+**What it is.** A purpose-built benchmark (released with DynamicVLA) for
+manipulating objects *in motion*, built in **NVIDIA Isaac Sim** with a **Franka
+Emika Panda** arm. Actions are a 32-d end-effector-pose + gripper vector.
+
+**Data scale (training):** ~200K synthetic episodes across ~2,800 scenes and
+~206 objects, plus ~2,000 teleoperation-free real episodes (dual-camera pose
+estimation), on Franka and PiPER arms.
+
+**Evaluation protocol:** **1,800 trials = 10 scenes × 9 "dimensions" × 20 trials**.
+Success = *complete the instructed manipulation without dropping the object or
+timing out*. Secondary metrics: path length (m) and task-completion time (s).
+
+**The 9 evaluation dimensions** (3 groups × 3):
+- **Interaction:** closed-loop reactivity · dynamic adaptation · long-horizon sequencing
+- **Perception:** visual understanding · spatial reasoning · motion perception
+- **Generalization:** visual generalization · motion generalization · disturbance robustness
+
+**Headline results (paper, average success over the 1,800 trials):**
+
+| method | success |
+|---|---|
+| **DynamicVLA** | **47.06%** |
+| VLA-Adapter-Pro | 13.61% |
+| GR00T-N1.5 | 13.05% |
+| SmolVLA | 12.67% |
+| π₀.₅ | 11.06% |
+| VLASH | 12.33% |
+| π₀ | 8.11% |
+| OpenVLA-OFT | 1.33% |
+| Diffusion Policy | 0.38% |
+
+---
+
+## 3. RTC — Real-Time Chunking
+
+**Origin.** *Real-Time Execution of Action Chunking Flow Policies* (Black,
+Galliker, Levine; Physical Intelligence / UC Berkeley; arXiv 2506.07339). RTC is
+an **inference-time algorithm** (no retraining) for flow/diffusion action-chunking
+policies — exactly the family DynamicVLA's action expert belongs to.
+
+**The problem it targets.** When a policy executes in *chunks*, the boundary
+between the current chunk and the next (generated during the inference delay)
+causes **discontinuities/jerk** and out-of-distribution motion — worst on
+precision and dynamic tasks.
+
+**The idea.** Frame asynchronous chunking as **guided inpainting** on the
+flow-matching sampler:
+- **Freeze** the actions guaranteed to execute during the inference delay
+  (`d` = ⌊latency/Δt⌋), so the new chunk *starts from* the committed trajectory.
+- **Soft-mask** the overlapping region with exponentially-decaying weights so the
+  new chunk blends smoothly into the old one.
+- **Guidance** (the ΠiGDM variant) steers the denoiser toward the committed
+  actions via a clipped vector-Jacobian term.
+
+Net effect (paper): smooth chunk transitions, robust to 300 ms+ latency, ~20%
+faster real-robot execution vs synchronous inference.
+
+---
+
+## 4. This project — RTC on DynamicVLA (progress)
+
+**Goal.** Add RTC to DynamicVLA's streaming inference and test whether it
+improves chunk-to-chunk smoothness (RTC's claim) in the latency regime
+DynamicVLA targets.
+
+**What was built.** An opt-in `rtc_mode ∈ {off, softmask, pigdm}` (default `off`,
+non-breaking) threaded through the streaming worker:
+- `off` — the original index-splice merge (baseline).
+- `softmask` — closed-form RePaint-style blend toward the committed chunk each
+  denoise step (no gradients; negligible overhead).
+- `pigdm` — RTC's ΠiGDM guidance via a per-step vector-Jacobian product (autodiff).
+
+**Validation method.** CPU unit tests (RTC math) → GPU smoke test on the real
+checkpoint → full Isaac Sim evaluation on the released `hzxie/dynamic-vla-DOM`
+checkpoint, comparing modes on **success rate** and a **seam-jerk** metric
+(L2 norm of the 2nd difference of the executed end-effector trajectory; lower =
+smoother).
+
+**Findings (ours — Isaac Sim, 89 envs × 2 trials/mode):**
+
+| mode | success | mean_jerk | steps (both-success) | exec time (both-success) |
+|---|---|---|---|---|
+| off (baseline) | 20.8% | 0.0263 | 156.5 | 11.2 s |
+| **softmask** | **24.2%** | **0.0166 (−37%)** | **140.9 (−10%)** | **10.2 s (−9%)** |
+| pigdm | 19.7% | 0.0387 (+47%) | — | — |
+
+- **`softmask` is the validated win:** smoother trajectories (−37% jerk),
+  fewer steps and faster completion on tasks both modes solve, and slightly
+  higher success — in the low-latency regime RTC is designed for. Recommended.
+- **`pigdm` currently regresses** end-to-end (lower success, +47% jerk) despite
+  its single-chunk guidance being correct; needs tuning (`rtc_beta` / a guidance
+  decay schedule). Experimental.
+
+**Honest caveats (important for the report):**
+- **Absolute success is below the paper's 47%.** We ruled out precision (bf16
+  gave no speedup) and inference latency (forcing `dt_scale=1` did not raise
+  success). A confirmed contributor is **rendering noise**: Isaac Sim 4.5's RTX
+  denoiser does not run on Blackwell (RTX 5090, where the full run was done), so
+  the policy received noisy out-of-distribution camera observations (~27× the
+  background noise of a denoiser-working GPU). A clean-render baseline on
+  supported hardware is the outstanding item.
+- **The RTC comparison is *relative* and unaffected by the above:** all modes ran
+  on identical observations/harness/checkpoint, so the softmask>off>pigdm ordering
+  holds even though the absolute numbers are suppressed.
+
+**Engineering notes worth a slide.** The end-to-end sim eval caught real bugs
+the unit + smoke tests missed — most notably a CPU/CUDA device mismatch that
+crashed the RTC streaming worker mid-episode (fixed; red-green regression test),
+and a pigdm divergence fixed by step-size scaling. Takeaway: full closed-loop
+evaluation is a necessary gate beyond component tests.
+
+---
+
+### Citations
+- DynamicVLA & DOM: Xie et al., *DynamicVLA: A Vision-Language-Action Model for Dynamic Object Manipulation*, arXiv:2601.22153.
+- RTC: Black, Galliker, Levine, *Real-Time Execution of Action Chunking Flow Policies*, arXiv:2506.07339.
+- This project: `docs/rtc.md` (operator guide + empirical findings), `docs/rtc-validation.md` (runbook).
