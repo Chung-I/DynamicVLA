@@ -74,3 +74,23 @@ Released `hzxie/dynamic-vla-DOM` checkpoint, all 89 DOM test envs × 2 trials/mo
   success). The residual ~2x likely reflects released-checkpoint / eval-protocol
   differences not recoverable from public artifacts. The comparison above is
   relative (same checkpoint + harness + envs) and is unaffected by it.
+
+### How `mean_jerk` / `p95_jerk` are computed
+
+Both come from `scripts/rtc_seam_metric.py` (`compute_jerk`), on each episode's
+executed end-effector **position** stream `p` of shape `(T, 3)`:
+
+1. Per-step jerk series = L2 norm of the **second difference** of position:
+   `jerk_t = ‖ p[t+1] − 2·p[t] + p[t−1] ‖` → a length-`(T−2)` array. This is the
+   discrete 2nd derivative of position (a smoothness/jerkiness proxy; larger =
+   more abrupt speed/direction changes). `mean_step` is the analogous L2 norm of
+   the **first** difference (per-step travel distance).
+2. Per episode: `mean_jerk` = mean of that series; `p95_jerk` = its 95th
+   percentile (captures the spikiest moments, not just the average).
+3. Per mode (the table values): `aggregate_mode` averages each per-episode number
+   across all episodes — i.e. mean-over-episodes of the per-episode mean (and of
+   the per-episode 95th percentile).
+
+This is a **whole-trajectory** position-jerk proxy (not seam-localized — the
+dumps don't record chunk-boundary indices), but the softmask↓ / pigdm↑ deltas
+are large and consistent enough to be meaningful.
