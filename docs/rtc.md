@@ -145,3 +145,34 @@ Tested three ways; the link does not hold:
 smoothness improves success. Report smoothness as the validated win and do *not*
 claim a success benefit. (Caveat: the success test is underpowered — 2 trials/env,
 noisy 5090 renders — so this is "no evidence of contribution," not "proven none.")
+
+### Inference cost & emulated latency (render-independent)
+
+The benchmark injects inference latency via `dt_scale` = (sim loop wall-time) /
+(control period, 0.04 s @ 25 Hz). The client paces itself (`sleep =
+inf·(dt_scale−1)`), which makes `dt_scale` **cancel**: the latency the policy
+actually experiences, in control steps, is `inference_time / control_period`
+(`inf/sim_dt`) — **independent of how fast the GPU renders the sim**. So `inf/sim_dt`,
+not `dt_scale`, is the meaningful (render-independent) latency number.
+
+Measured (5090 run, n_chunks 0.2–16k/mode):
+
+| mode     | avg inference | inf/sim_dt (latency, control steps) |
+|----------|---------------|-------------------------------------|
+| off      | 114 ms        | 2.8                                 |
+| softmask | 120 ms (+5%)  | 3.0                                 |
+| pigdm    | 281 ms (2.5×) | 7.0                                 |
+
+- **softmask adds negligible inference cost (~5%)** → essentially the same latency
+  as `off` (confirms the "no meaningful overhead" claim).
+- **pigdm's per-step autodiff makes it 2.5× slower → 2.5× more emulated latency**,
+  regardless of GPU — a real handicap and part of why it regresses.
+- `dt_scale` itself (~1.9–2.0 here) is **render-bound** (server-side) and cancels
+  out by design; it is *not* the policy's latency. (Hence it was similar across
+  modes despite pigdm's longer inference — in streaming the client computes the
+  next chunk while the server renders.)
+- **Caveat — shared-GPU coupling:** inference and rendering share the GPU, so
+  heavier clean rendering (denoiser) steals cycles from the model forward and
+  slows inference → more latency (e.g., cml18 clean run: inf ~0.41 s → ~10 steps).
+  Running the simulator and policy on separate GPUs (or the paper's A6000)
+  decouples them as the design intends.

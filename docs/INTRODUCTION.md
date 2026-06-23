@@ -158,6 +158,22 @@ Spearman r = −0.15, p = 0.16 — no correlation. (3) The weak failure↔jerk l
 So smoothness and the success blip look like **independent effects**; we claim
 the smoothness win, **not** a success benefit (success test is underpowered, so
 "no evidence," not "proven none").
+
+**Inference cost & emulated latency.** The benchmark's `dt_scale` (sim-loop /
+control-period) cancels out via client self-pacing, so the latency the policy
+actually faces = `inference_time / control_period` (`inf/sim_dt`) — **independent
+of GPU render speed**; that, not `dt_scale`, is the latency that matters.
+
+| mode | avg inference | inf/sim_dt (latency, control steps) |
+|---|---|---|
+| off | 114 ms | 2.8 |
+| softmask | 120 ms (+5%) | 3.0 |
+| pigdm | 281 ms (2.5×) | 7.0 |
+
+softmask is essentially free (~5%); pigdm's per-step autodiff costs 2.5× more
+inference → 2.5× more latency (GPU-independent) — a real handicap behind its
+regression. (Caveat: on a shared GPU, clean rendering slows inference too — the
+design assumes sim and policy can be decoupled.)
 - **`pigdm` currently regresses** end-to-end (lower success, +47% jerk) despite
   its single-chunk guidance being correct; needs tuning (`rtc_beta` / a guidance
   decay schedule). Experimental.
