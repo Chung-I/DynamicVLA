@@ -126,3 +126,22 @@ small-to-medium effect; paired t-test borderline (p ≈ 0.05–0.06) at this sma
 
 **Success rate (24.2% vs 20.8%):** within noise at 2 trials/env — not claimed
 as significant.
+
+### Does the lower jerk *cause* the (slightly) better success? — No evidence
+
+Tested three ways; the link does not hold:
+- **The success gain itself is not significant.** Matched-pair McNemar on success
+  (n=178): 22 envs flipped off-fail→softmask-win vs 16 the other way, **p = 0.42**.
+- **Mediation test finds nothing.** Across 89 envs, per-env *jerk reduction* vs
+  per-env *success gain*: Spearman **r = −0.15, p = 0.16** — no correlation (if
+  smoothness drove success, bigger jerk cuts should yield bigger success gains).
+- **The only jerk↔success association is weak and confounded.** Failed episodes
+  are just 1.2× jerkier than successful ones — and that is likely *reverse*
+  causation (a failing episode wanders to the 300-step timeout, which *produces*
+  jerk; success → short clean trajectory → low jerk).
+
+**Verdict:** softmask's smoothness (robust, p≈1e-18) and its success blip
+(not significant) appear to be **independent effects** — there is no evidence the
+smoothness improves success. Report smoothness as the validated win and do *not*
+claim a success benefit. (Caveat: the success test is underpowered — 2 trials/env,
+noisy 5090 renders — so this is "no evidence of contribution," not "proven none.")

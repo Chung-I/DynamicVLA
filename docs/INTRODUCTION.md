@@ -150,6 +150,14 @@ paired episodes where softmask is lower (smoother/fewer/faster).
 → significant by paired Wilcoxon (p ≤ 0.003, survives Bonferroni), small-medium
 effect; t-test borderline at this small n. Success-rate differences are within
 noise — **the smoothness result is the strong, headline claim.**
+
+**Does lower jerk *cause* better success? No evidence.** (1) The success gain
+isn't significant (McNemar p = 0.42). (2) Per-env jerk-reduction vs success-gain:
+Spearman r = −0.15, p = 0.16 — no correlation. (3) The weak failure↔jerk link
+(failures 1.2× jerkier) is likely reverse causation (timeouts wander → jerk).
+So smoothness and the success blip look like **independent effects**; we claim
+the smoothness win, **not** a success benefit (success test is underpowered, so
+"no evidence," not "proven none").
 - **`pigdm` currently regresses** end-to-end (lower success, +47% jerk) despite
   its single-chunk guidance being correct; needs tuning (`rtc_beta` / a guidance
   decay schedule). Experimental.
