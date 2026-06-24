@@ -278,6 +278,35 @@ Measured (5090 run, n_chunks 0.2–16k/mode):
   Running the simulator and policy on separate GPUs (or the paper's A6000)
   decouples them as the design intends.
 
+### How `Time` (and `Path Len`) are computed — and why they are render-fair
+
+The eval loop (`evaluate.py`, `while sim_results["status"] == -1`) runs **one
+control step per iteration**, appending one `ee_path` entry per step. So:
+
+```
+Time     = (#control steps until termination) × step_dt
+Path Len = Σ ‖ ee_path[t+1] − ee_path[t] ‖   (meters)
+```
+
+- **`step_dt` = `--physics_time_step` = 0.04 s** (`env_cfg.dt`; 25 Hz, matching the
+  paper's 25-FPS cameras). Termination: `status=0` (success place-term) or
+  `status=1` (drop **or** the env's `time_out` term, ~300 steps ≈ 12 s). Averaged
+  over **all** trials (success short, timeout ~12 s) — as in the paper.
+- **`Time` is *simulated* seconds (step-count × 0.04 s), NOT wall-clock.** Each
+  control step is 0.04 s of sim-world time regardless of how long the GPU takes to
+  render it, so a fast and a slow GPU recording the *same* trajectory get the
+  *same* `Time`. The real-time floor (`if step_time < step_dt: sleep(...)`) plus
+  the client's `dt_scale` sleep keep the sim advancing at the right rate relative
+  to inference, but the *recorded* time is always `n_steps × step_dt`.
+
+**Hardware fairness:** `Time`/`Path Len` are immune to **render/GPU-render speed**
+(the `dt_scale` cancellation — same principle as `inf/sim_dt`), but they
+**intentionally reflect inference latency**: a faster policy (lower `inf/sim_dt`)
+reacts sooner → completes in fewer steps and times-out less → lower `Time`. So the
+metrics are fair across render hardware while still crediting a faster model — by
+design. (This is why softmask's smoother, shorter paths give Path Len 2.60 vs 3.14
+m and Time 7.65 vs 8.07 s in our cross-machine run.)
+
 ### RTC chunk split, measured (5090 softmask run)
 
 The soft-mask weight schedule (the figure's guidance-weight curve) partitions the
