@@ -154,6 +154,14 @@ So the paper has **10 scenes *per dimension* (90 scene-instances total)**, not 1
 overall — we cover the **same ~90 scene-instances across the same 9 dimensions**;
 the only real difference is **2 vs 20 trials per scene**.
 
+> **Note on the 89 vs 90:** the released `test-envs.txt` is *complete* (90 envs).
+> Our runs evaluated 89 because the driver ran `head -n 89` — `NENV` was set from
+> `wc -l`, which reports 89 (the last line has no trailing newline, so the newline
+> count is one short). This silently dropped the last env (`3-3 can12d`, a DR
+> scene). It is a harness-side truncation, **not** a missing scene in the release.
+> Impact is negligible (2 of 178 episodes) and identical across all our runs, so
+> cross-run comparisons are unaffected; only the vs-paper coverage is 89/90.
+
 - **Same 9 dimensions** — our tiers map one-to-one onto the paper's:
   `1-x` = Interaction (CR/DA/LS), `2-x` = Perception (VU/SR/MP),
   `3-x` = Generalization (VG/MG/DR). Per-tier numbers track the paper's

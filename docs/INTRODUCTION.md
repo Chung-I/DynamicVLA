@@ -243,8 +243,11 @@ gated by latency.
 scene. Units: **9 dimensions** (sub-skills; our tiers `1-1…3-3`) × **~10 scenes
 per dimension** (environment instances) × **trials per scene** (randomized
 rollouts). Paper (Table I): 9 × **10 scenes/dim** × **20 trials** = **1,800**.
-Ours: 9 × ~10 × **2 trials** = **178** (89 of 90 scene-instances — one DR scene
-missing from the released `test-envs.txt`). So the paper's "10 scenes" is *per
+Ours: 9 × ~10 × **2 trials** = **178** (89 of 90 scene-instances — the released
+`test-envs.txt` is complete at 90, but our driver ran `head -n 89` because `wc -l`
+reports 89, the last line lacking a trailing newline; this dropped one DR scene.
+Harness truncation, not a release defect; identical across all our runs, so
+internal comparisons are unaffected). So the paper's "10 scenes" is *per
 dimension* (90 instances total), not 10 overall — **we cover the same ~90
 scene-instances across the same 9 dimensions; the only difference is 2 vs 20
 trials per scene.** Our tiers map 1:1 onto the paper's dimensions (`1-x`=Interaction
