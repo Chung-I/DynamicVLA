@@ -139,12 +139,20 @@ latency the overlap is the binding constraint, so RTC degenerates to freezing th
 
 ## Our eval subset vs the paper's DOM test set
 
-We evaluate on the **same DOM structure** as the paper but with **fewer trials**:
+We evaluate on the **same DOM structure** as the paper but with **fewer trials per
+scene**. Units: a **dimension** is one of 9 sub-skills (Interaction CR/DA/LS,
+Perception VU/SR/MP, Generalization VG/MG/DR = our tiers `1-1…3-3`); a **scene** is
+one environment instance *within* a dimension (paper: 10 scenes per dimension); a
+**trial** is one randomized rollout of a scene.
 
-| | environments | trials/env | total episodes |
-|---|---|---|---|
-| **ours** | 89 (1 short of 90) | **2** | **178** |
-| paper (Table I) | 90 = 9 dimensions × 10 scenes | **20** | **1,800** |
+| | dimensions | scenes/dim | scene-instances | trials/scene | total episodes |
+|---|---|---|---|---|---|
+| **ours** | 9 | ~10 | **89** (1 short of 90) | **2** | **178** |
+| paper (Table I) | 9 | 10 | **90** | **20** | **1,800** |
+
+So the paper has **10 scenes *per dimension* (90 scene-instances total)**, not 10
+overall — we cover the **same ~90 scene-instances across the same 9 dimensions**;
+the only real difference is **2 vs 20 trials per scene**.
 
 - **Same 9 dimensions** — our tiers map one-to-one onto the paper's:
   `1-x` = Interaction (CR/DA/LS), `2-x` = Perception (VU/SR/MP),

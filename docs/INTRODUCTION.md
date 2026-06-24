@@ -239,15 +239,19 @@ overlap collapses to ~2). And **success is flat in every regime** (cross-machine
 off 56.2% vs softmask 56.7%, McNemar p=1.0): RTC's value is *purely* smoothness,
 gated by latency.
 
-**Our eval subset vs the paper's test set.** Same DOM structure, fewer trials:
-ours = **89 scenes × 2 trials = 178 episodes**; paper (Table I) = **90 = 9
-dimensions × 10 scenes, × 20 trials = 1,800**. Our 9 tiers map one-to-one onto the
-paper's 9 dimensions (`1-x`=Interaction CR/DA/LS, `2-x`=Perception VU/SR/MP,
-`3-x`=Generalization VG/MG/DR; e.g. our 1-1=60% vs paper CR=60.5%). With only **2
-trials/env** our per-env success is 0.0/0.5/1.0-granular (vs the paper's 0.05 over
-20 trials), so our 56.2% vs 47.06% is "at/above paper within sampling noise", not
-a precise superiority claim (we also run 89 of 90 scenes — one DR scene missing
-from the released `test-envs.txt`).
+**Our eval subset vs the paper's test set.** Same DOM structure, fewer trials per
+scene. Units: **9 dimensions** (sub-skills; our tiers `1-1…3-3`) × **~10 scenes
+per dimension** (environment instances) × **trials per scene** (randomized
+rollouts). Paper (Table I): 9 × **10 scenes/dim** × **20 trials** = **1,800**.
+Ours: 9 × ~10 × **2 trials** = **178** (89 of 90 scene-instances — one DR scene
+missing from the released `test-envs.txt`). So the paper's "10 scenes" is *per
+dimension* (90 instances total), not 10 overall — **we cover the same ~90
+scene-instances across the same 9 dimensions; the only difference is 2 vs 20
+trials per scene.** Our tiers map 1:1 onto the paper's dimensions (`1-x`=Interaction
+CR/DA/LS, `2-x`=Perception VU/SR/MP, `3-x`=Generalization VG/MG/DR; e.g. our
+1-1=60% vs paper CR=60.5%). With only 2 trials/scene our per-scene success is
+0.0/0.5/1.0-granular (vs 0.05 over 20 trials), so 56.2% vs 47.06% is "at/above
+paper within sampling noise", not a precise superiority claim.
 
 **Engineering notes worth a slide.** The end-to-end sim eval caught real bugs
 the unit + smoke tests missed — most notably a CPU/CUDA device mismatch that
