@@ -205,17 +205,49 @@ Each frame is three camera views side-by-side (the policy's wrist + scene cams).
 Suggested slide: play the two clips side-by-side; caption "same task, both
 succeed — RTC (softmask) removes the chunk-boundary jerk (3.6× lower)."
 
-**Honest caveats (important for the report):**
-- **Absolute success is below the paper's 47%.** We ruled out precision (bf16
-  gave no speedup) and inference latency (forcing `dt_scale=1` did not raise
-  success). A confirmed contributor is **rendering noise**: Isaac Sim 4.5's RTX
-  denoiser does not run on Blackwell (RTX 5090, where the full run was done), so
-  the policy received noisy out-of-distribution camera observations (~27× the
-  background noise of a denoiser-working GPU). A clean-render baseline on
-  supported hardware is the outstanding item.
-- **The RTC comparison is *relative* and unaffected by the above:** all modes ran
-  on identical observations/harness/checkpoint, so the softmask>off>pigdm ordering
-  holds even though the absolute numbers are suppressed.
+**Baseline gap RESOLVED — render quality + latency (not RTC, not protocol).**
+The initial 20.8% (far below the paper's 47.06%) was a *hardware artifact*, now
+fully explained by re-running `off` while varying render quality and policy
+latency independently:
+
+| setup | renders | policy latency (`inf/sim_dt`) | off success |
+|---|---|---|---|
+| standalone RTX 5090 | noisy (Blackwell denoiser broken) | low (~2.8 steps) | 20.8% |
+| standalone cml18 (RTX 4090) | clean | high (~11 steps) | 37.1% |
+| **cross-machine (cml18 sim + 5090 model)** | **clean** | **low (~2.6 steps)** | **56.2%** |
+| paper (A6000) | clean | low | 47.06% |
+
+Render quality ≈ **+16 pts**, low latency ≈ **+19 pts**; with both fixed the
+released checkpoint **matches/exceeds** the paper. The cross-machine setup runs
+the sim+render on cml18's 4090 (clean) and the policy on the local 5090 (fast),
+ZMQ-linked over a 1 ms-LAN SSH tunnel — decoupling render speed from inference
+latency onto separate GPUs.
+
+**RTC is latency-gated smoothing — confirmed across three regimes.** softmask vs
+off, paired:
+
+| regime | overlap | mean_jerk Δ | significance | success Δ |
+|---|---|---|---|---|
+| 5090 (noisy, low-lat) | 11–16 | −37% | p≈1e-18, dz≈0.77 | ns |
+| cml18 (clean, high-lat) | ~2 | −4% | p=0.14 (**ns**) | ns |
+| **cross-machine (clean, low-lat)** | **~15** | **−36%** | **p≈2e-20, dz≈0.68** | ns |
+
+The cross-machine run **reproduces** the strong smoothing (−36%/−42% jerk) with
+*verified* clean renders + low latency + full RTC engagement (overlap ~15) — so
+it is real, not a noisy-5090 artifact. It **vanishes at high latency** (cml18,
+overlap collapses to ~2). And **success is flat in every regime** (cross-machine
+off 56.2% vs softmask 56.7%, McNemar p=1.0): RTC's value is *purely* smoothness,
+gated by latency.
+
+**Our eval subset vs the paper's test set.** Same DOM structure, fewer trials:
+ours = **89 scenes × 2 trials = 178 episodes**; paper (Table I) = **90 = 9
+dimensions × 10 scenes, × 20 trials = 1,800**. Our 9 tiers map one-to-one onto the
+paper's 9 dimensions (`1-x`=Interaction CR/DA/LS, `2-x`=Perception VU/SR/MP,
+`3-x`=Generalization VG/MG/DR; e.g. our 1-1=60% vs paper CR=60.5%). With only **2
+trials/env** our per-env success is 0.0/0.5/1.0-granular (vs the paper's 0.05 over
+20 trials), so our 56.2% vs 47.06% is "at/above paper within sampling noise", not
+a precise superiority claim (we also run 89 of 90 scenes — one DR scene missing
+from the released `test-envs.txt`).
 
 **Engineering notes worth a slide.** The end-to-end sim eval caught real bugs
 the unit + smoke tests missed — most notably a CPU/CUDA device mismatch that
