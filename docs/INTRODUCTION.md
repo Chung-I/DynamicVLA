@@ -115,41 +115,46 @@ checkpoint, comparing modes on **success rate** and a **seam-jerk** metric
 (L2 norm of the 2nd difference of the executed end-effector trajectory; lower =
 smoother).
 
-**Findings (ours — Isaac Sim, 89 envs × 2 trials/mode):**
+**Findings (ours — definitive cross-machine run: cml18 4090 sim + 5090 model,
+clean render + low latency, 90 envs × 2 trials, n=177 matched):**
 
-| mode | success | mean_jerk | steps (both-success) | exec time (both-success) |
+| mode | success | mean_jerk | path len | time |
 |---|---|---|---|---|
-| off (baseline) | 20.8% | 0.0263 | 156.5 | 11.2 s |
-| **softmask** | **24.2%** | **0.0166 (−37%)** | **140.9 (−10%)** | **10.2 s (−9%)** |
-| pigdm | 19.7% | 0.0387 (+47%) | — | — |
+| off (baseline) | 56.5% | 0.0173 | 3.14 m | 8.07 s |
+| **softmask (RTC)** | **56.7%** | **0.0109 (−37%)** | **2.59 m (−17%)** | **7.64 s (−5%)** |
 
-- **`softmask` is the validated win:** smoother trajectories (−37% jerk),
-  fewer steps and faster completion on tasks both modes solve, and slightly
-  higher success — in the low-latency regime RTC is designed for. Recommended.
-**Statistical significance (softmask vs off, paired).** "softmask better" =
-paired episodes where softmask is lower (smoother/fewer/faster).
+(`pigdm` was run only on the initial noisy-5090 setup, where it regressed —
++47% jerk, lower success; not re-run cross-machine.)
 
-*Smoothness — all matched episodes (n=178):*
+- **`softmask` is the validated win:** −37%/−42% jerk (p≈1e-20), −17% path length,
+  −5% time, with **success unchanged** (56.7% vs 56.5%, McNemar p=1.0). RTC's value
+  is smoother/shorter/faster execution — not higher success. Recommended.
+**Statistical significance (softmask vs off, paired — definitive cross-machine
+run, n=177).** "softmask better" = paired episodes where softmask is lower
+(smoother/shorter/faster). Matched by (env, trial) over the 90-env × 2-trial run.
+
+*Smoothness — all matched episodes (n=177):*
 
 | metric    | off    | softmask | Δ    | softmask better | Wilcoxon p | t-test p | dz   |
 |-----------|--------|----------|------|-----------------|------------|----------|------|
-| mean_jerk | 0.0263 | 0.0166   | −37% | 148/178         | 1.4e-18    | 1.4e-19  | 0.77 |
-| p95_jerk  | 0.1082 | 0.0623   | −42% | 146/178         | 5.3e-19    | 1.4e-18  | 0.74 |
+| mean_jerk | 0.0173 | 0.0109   | −37% | 151/177         | 7.9e-21    | 1.8e-16  | 0.68 |
+| p95_jerk  | 0.0645 | 0.0373   | −42% | 143/177         | 2.3e-19    | 2.9e-15  | 0.65 |
 
-→ strongly significant, large effect (holds env-level too: 77/89, p ≈ 8e-13, dz ≈ 1.07).
+→ strongly significant, medium-large effect — and it **reproduces** the noisy-5090
+magnitude (−37%/−42%) with verified clean renders + low latency.
 
-*Steps / execution time — both-success tasks only (n=21):*
+*Steps / execution time / path — all matched episodes (n=177):*
 
-| metric           | off     | softmask | Δ    | softmask better | Wilcoxon p | t-test p | dz   |
-|------------------|---------|----------|------|-----------------|------------|----------|------|
-| action steps     | 156.5   | 140.9    | −10% | 17/21           | 0.003      | 0.048    | 0.46 |
-| policy actions   | 149.1   | 133.4    | −11% | 17/21           | 0.003      | 0.046    | 0.46 |
-| exec time (sim)  | 6.26 s  | 5.63 s   | −10% | 17/21           | 0.003      | 0.048    | 0.46 |
-| exec time (wall) | 11.22 s | 10.17 s  | −9%  | 18/21           | 0.002      | 0.062    | 0.43 |
+| metric          | off     | softmask | Δ    | softmask better | Wilcoxon p | t-test p | dz   |
+|-----------------|---------|----------|------|-----------------|------------|----------|------|
+| action steps    | 201.7   | 190.9    | −5%  | 110/177         | 8.1e-4     | 0.088    | 0.13 |
+| exec time (sim) | 8.07 s  | 7.64 s   | −5%  | 110/177         | 8.5e-4     | 0.088    | 0.13 |
+| path length (m) | 3.14    | 2.59     | −17% | 133/177         | 3.7e-8     | 3.7e-5   | 0.32 |
 
-→ significant by paired Wilcoxon (p ≤ 0.003, survives Bonferroni), small-medium
-effect; t-test borderline at this small n. Success-rate differences are within
-noise — **the smoothness result is the strong, headline claim.**
+(`exec time (sim)` = `action steps × 0.04 s`, so it carries identical statistics.)
+→ **path length is strongly significant** (−17%, p≈4e-8, dz=0.32); steps/time −5%,
+significant by Wilcoxon (p≈8e-4) but small effect and t-borderline. Success is flat
+(McNemar p=1.0) — **smoothness and shorter path are the headline; success unchanged.**
 
 **Does lower jerk *cause* better success? No evidence.** (1) The success gain
 isn't significant (McNemar p = 0.42). (2) Per-env jerk-reduction vs success-gain:

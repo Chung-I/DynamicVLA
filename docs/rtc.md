@@ -1,9 +1,15 @@
-# Real-Time Chunking (RTC) for DynamicVLA streaming
+# Real-Time Chunking (RTC) for DynamicVLA streaming — method & measurement
 
 RTC makes a newly generated action chunk continuous with the actions already
 committed for execution, reducing discontinuities at chunk boundaries during
 streaming inference. It is an inference-time method (no retraining) applied
 inside the flow-matching denoising loop, and is **opt-in**.
+
+> **Scope.** This file is the **run-independent reference**: how RTC works and
+> how each metric is computed. **All experimental results** (the 5090 / cml18 /
+> cross-machine runs, baseline-gap resolution, significance, Table-I reproduction,
+> demo videos) live in [`INTRODUCTION.md`](INTRODUCTION.md). Nothing here should
+> contain run-specific numbers.
 
 ## Modes (`rtc_mode` in the policy config)
 
@@ -37,13 +43,6 @@ RTC only applies during streaming inference (`enable_streaming=True`,
 3. `sample_actions` applies the target during denoising (`softmask` blend or
    `pigdm` guidance).
 
-## Validating in sim
-
-Run `simulations/evaluate.py` against `scripts/inference.py -s` once per mode
-and compare success rates and `avg_path_length` (smoother trajectories are
-shorter / less jerky). Use `inference.py -o <dir>` to dump per-step actions
-for seam inspection.
-
 ## Caveats
 
 - `pigdm` increases inference latency (autodiff per step); on a latency-bound
@@ -53,130 +52,17 @@ for seam inspection.
   observations within the delay window. On highly dynamic objects, validate
   that success rate does not regress vs `off`.
 
-## Empirical findings (initial run — RTX 5090, noisy renders)
+## Validating in sim
 
-Released `hzxie/dynamic-vla-DOM` checkpoint, all 89 DOM test envs × 2 trials/mode
-(jerk via `scripts/rtc_seam_metric.py`, EE-position 2nd difference). **Caveat:
-this run was on an RTX 5090 (Blackwell), whose RTX denoiser is broken under Isaac
-Sim 4.5 → the camera observations were noisy/out-of-distribution, depressing all
-absolute success rates. The relative jerk comparison still holds; the absolute
-success numbers were later superseded — see "Baseline gap resolved" below.**
+Run `simulations/evaluate.py` against `scripts/inference.py -s` once per mode and
+compare success rate, jerk, and path length. Use `inference.py -o <dir>` to dump
+per-step actions for seam inspection; `scripts/rtc_seam_metric.py` aggregates jerk.
 
-| mode      | success | mean_jerk     | p95_jerk      |
-|-----------|---------|---------------|---------------|
-| off       | 20.8%   | 0.0263        | 0.1082        |
-| softmask  | 24.2%   | 0.0166 (-37%) | 0.0623 (-42%) |
-| pigdm     | 19.7%   | 0.0387 (+47%) | 0.2022 (+87%) |
+---
 
-- **`softmask` is recommended**: markedly smoother trajectories (lower jerk) than
-  `off`, in the low-latency regime RTC targets. (The +3.4 pt success here is
-  within noise — see the cross-machine run, where success is flat.)
-- **`pigdm` currently regresses** end-to-end (lower success, higher jerk) even
-  though its single-chunk guidance reduces distance-to-target. Treat as
-  experimental — needs `rtc_beta` tuning / a guidance decay schedule; not for use as-is.
+# Metric definitions (how each number is computed)
 
-## Baseline gap resolved: render quality + latency (not RTC, not protocol)
-
-The earlier guess that the gap to the paper's 47.06% was an unrecoverable
-"protocol difference" was **wrong**. Re-running `off` while varying *render
-quality* and *policy latency* independently explains (and exceeds) the gap:
-
-| setup                                   | renders                     | policy latency `inf/sim_dt` | off success |
-|-----------------------------------------|-----------------------------|-----------------------------|-------------|
-| standalone RTX 5090                      | noisy (Blackwell denoiser)  | low (~2.8 steps)            | 20.8%       |
-| standalone cml18 (RTX 4090)             | clean                       | high (~11 steps)            | 37.1%       |
-| **cross-machine (cml18 sim + 5090 model)** | **clean**                | **low (~2.6 steps)**        | **56.2%**   |
-| paper (A6000)                           | clean                       | low                         | 47.06%      |
-
-- **Render quality ≈ +16 pts** (noisy→clean), **low latency ≈ +19 pts**
-  (high→low). With both fixed, the released checkpoint **matches/exceeds** the
-  paper — the gap was hardware artifacts, not the RTC code or the method.
-- **Cross-machine setup:** Isaac sim+render runs on cml18's RTX 4090 (denoiser
-  works → clean), the policy runs on the local RTX 5090 (fast → low latency),
-  bridged by a ZMQ link over an SSH tunnel (1 ms LAN RTT). This decouples render
-  speed from inference latency onto separate GPUs — `dt_scale≈3` (render-bound on
-  cml18) yet `inf/sim_dt≈2.6` (low, because inference is on the fast 5090).
-
-### RTC is latency-gated smoothing (three regimes)
-
-Same checkpoint/harness; softmask vs off, paired by (env, trial). RTC only helps
-when policy latency is low enough to leave meaningful chunk **overlap** to blend:
-
-| regime                          | overlap (median) | mean_jerk Δ | significance         | success Δ |
-|---------------------------------|------------------|-------------|----------------------|-----------|
-| 5090 (noisy, low-latency)       | 11–16            | −37%        | p≈1.4e-18, dz≈0.77   | ns        |
-| cml18 (clean, high-latency)     | ~2               | −4%         | p=0.14 (ns)          | ns        |
-| **cross-machine (clean, low-lat)** | **~15**       | **−36%**    | **p≈2e-20, dz≈0.68** | **ns**    |
-
-- **Smoothing is robust and real:** the cross-machine run reproduces the 5090's
-  −36% mean-jerk / −42% p95-jerk (Wilcoxon p≈2e-20 / 5e-19, softmask smoother in
-  149/175 and 141/175 episodes) — now with *verified* clean renders, low latency,
-  and full RTC engagement, so it is not a noisy-5090 artifact.
-- **Smoothing vanishes at high latency:** on cml18-standalone the action queue
-  drains between chunks (overlap collapses to ~2, `changeable`→0), so softmask
-  barely engages → −4%, ns.
-- **Success is unaffected in every regime** (cross-machine: off 56.2% vs softmask
-  56.7%, McNemar p=1.0). RTC's contribution is *purely* smoothness, gated by
-  latency — it does not change task success.
-
-### RTC chunk-split statistics across regimes (H=20)
-
-`[RTC]` logging in `_build_inpaint_target` records, per chunk,
-`d = min(freeze, overlap)` and the `overlap = h_prev − shift` (still-queued prior
-actions). `frozen=d`, `changeable=overlap−d`, `fresh=H−overlap`:
-
-| regime          | frozen (d) | changeable | fresh | overlap | note |
-|-----------------|-----------|------------|-------|---------|------|
-| 5090 (low-lat)  | 6–7       | 4–10       | 4–9   | 11–16   | freeze<overlap, soft-decay active |
-| cml18 (high-lat)| ~2        | **0**      | ~18   | ~2 (41% =1) | freeze≥overlap → no soft-decay region |
-| cross-machine   | 4 (med)   | 10 (med)   | 5     | 15 (med)| soft-decay fully active |
-
-(cross-machine distribution, n=12777 chunks: frozen mean 4.4 [1–14], changeable
-mean 10.3 [0–15], fresh mean 5.4 [3–17], overlap mean 14.6 [3–17].) Key point:
-`frozen` is **not** the inference delay — it is `min(delay, overlap)`, and at high
-latency the overlap is the binding constraint, so RTC degenerates to freezing the
-~2 still-queued actions with no exponential-decay blend.
-
-## Our eval subset vs the paper's DOM test set
-
-We evaluate on the **same DOM structure** as the paper but with **fewer trials per
-scene**. Units: a **dimension** is one of 9 sub-skills (Interaction CR/DA/LS,
-Perception VU/SR/MP, Generalization VG/MG/DR = our tiers `1-1…3-3`); a **scene** is
-one environment instance *within* a dimension (paper: 10 scenes per dimension); a
-**trial** is one randomized rollout of a scene.
-
-| | dimensions | scenes/dim | scene-instances | trials/scene | total episodes |
-|---|---|---|---|---|---|
-| **ours** | 9 | ~10 | **89** (1 short of 90) | **2** | **178** |
-| paper (Table I) | 9 | 10 | **90** | **20** | **1,800** |
-
-So the paper has **10 scenes *per dimension* (90 scene-instances total)**, not 10
-overall — we cover the **same ~90 scene-instances across the same 9 dimensions**;
-the only real difference is **2 vs 20 trials per scene**.
-
-> **Note on the 89 vs 90:** the released `test-envs.txt` is *complete* (90 envs).
-> Our runs evaluated 89 because the driver ran `head -n 89` — `NENV` was set from
-> `wc -l`, which reports 89 (the last line has no trailing newline, so the newline
-> count is one short). This silently dropped the last env (`3-3 can12d`, a DR
-> scene). It is a harness-side truncation, **not** a missing scene in the release.
-> Impact is negligible (2 of 178 episodes) and identical across all our runs, so
-> cross-run comparisons are unaffected; only the vs-paper coverage is 89/90.
-
-- **Same 9 dimensions** — our tiers map one-to-one onto the paper's:
-  `1-x` = Interaction (CR/DA/LS), `2-x` = Perception (VU/SR/MP),
-  `3-x` = Generalization (VG/MG/DR). Per-tier numbers track the paper's
-  per-dimension SRs (e.g. our `1-1` = 60% vs paper CR = 60.5%).
-- **10× fewer trials (2 vs 20):** our per-env success has granularity 0.0/0.5/1.0
-  (2 trials) vs the paper's 0.05 (20 trials), so our overall rate is a much
-  higher-variance estimate — a handful of envs flipping moves it several points.
-  Our cross-machine 56.2% vs the paper's 47.06% is therefore "at or above paper,
-  within sampling noise", not a precise superiority claim. (We also run 89 of the
-  90 scenes — one `3-3`/DR scene is missing from the released `test-envs.txt`.)
-- We use the **released checkpoint + released harness**, so the comparison is
-  apples-to-apples on method/weights; the only differences are trial count, the
-  one missing scene, and hardware (now controlled via the cross-machine setup).
-
-### How `mean_jerk` / `p95_jerk` are computed
+## `mean_jerk` / `p95_jerk`
 
 Both come from `scripts/rtc_seam_metric.py` (`compute_jerk`), on each episode's
 executed end-effector **position** stream `p` of shape `(T, 3)`:
@@ -188,97 +74,12 @@ executed end-effector **position** stream `p` of shape `(T, 3)`:
    the **first** difference (per-step travel distance).
 2. Per episode: `mean_jerk` = mean of that series; `p95_jerk` = its 95th
    percentile (captures the spikiest moments, not just the average).
-3. Per mode (the table values): `aggregate_mode` averages each per-episode number
-   across all episodes — i.e. mean-over-episodes of the per-episode mean (and of
-   the per-episode 95th percentile).
+3. Per mode: average each per-episode number across all episodes.
 
 This is a **whole-trajectory** position-jerk proxy (not seam-localized — the
-dumps don't record chunk-boundary indices), but the softmask↓ / pigdm↑ deltas
-are large and consistent enough to be meaningful.
+dumps don't record chunk-boundary indices).
 
-### Statistical significance (softmask vs off, paired)
-
-Same checkpoint/harness/envs/observations across modes, so episodes are matched
-by (env, trial) and compared with paired tests. "softmask better" = number of
-paired episodes where softmask's value is lower (smoother/fewer/faster).
-
-**Smoothness — all matched episodes (n=178; jerk is defined regardless of success):**
-
-| metric    | off    | softmask | Δ    | softmask better | Wilcoxon p | t-test p | dz   |
-|-----------|--------|----------|------|-----------------|------------|----------|------|
-| mean_jerk | 0.0263 | 0.0166   | −37% | 148/178 (83%)   | 1.4e-18    | 1.4e-19  | 0.77 |
-| p95_jerk  | 0.1082 | 0.0623   | −42% | 146/178 (82%)   | 5.3e-19    | 1.4e-18  | 0.74 |
-
-Strongly significant (large effect). Holds under the conservative env-level test
-(collapse 2 trials/env → n=89): mean_jerk smoother in 77/89 envs, Wilcoxon
-p ≈ 8e-13, dz ≈ 1.07.
-
-**Steps / execution time — both-success tasks only (n=21):**
-
-| metric            | off    | softmask | Δ    | softmask better | Wilcoxon p | t-test p | dz   |
-|-------------------|--------|----------|------|-----------------|------------|----------|------|
-| action steps      | 156.5  | 140.9    | −10% | 17/21           | 0.003      | 0.048    | 0.46 |
-| policy actions    | 149.1  | 133.4    | −11% | 17/21           | 0.003      | 0.046    | 0.46 |
-| exec time (sim)   | 6.26 s | 5.63 s   | −10% | 17/21           | 0.003      | 0.048    | 0.46 |
-| exec time (wall)  | 11.22 s| 10.17 s  | −9%  | 18/21           | 0.002      | 0.062    | 0.43 |
-
-Significant by paired Wilcoxon (p ≤ 0.003, survives Bonferroni for 4 metrics),
-small-to-medium effect; paired t-test borderline (p ≈ 0.05–0.06) at this small n.
-
-**Success rate (24.2% vs 20.8%):** within noise at 2 trials/env — not claimed
-as significant.
-
-### Does the lower jerk *cause* the (slightly) better success? — No evidence
-
-Tested three ways; the link does not hold:
-- **The success gain itself is not significant.** Matched-pair McNemar on success
-  (n=178): 22 envs flipped off-fail→softmask-win vs 16 the other way, **p = 0.42**.
-- **Mediation test finds nothing.** Across 89 envs, per-env *jerk reduction* vs
-  per-env *success gain*: Spearman **r = −0.15, p = 0.16** — no correlation (if
-  smoothness drove success, bigger jerk cuts should yield bigger success gains).
-- **The only jerk↔success association is weak and confounded.** Failed episodes
-  are just 1.2× jerkier than successful ones — and that is likely *reverse*
-  causation (a failing episode wanders to the 300-step timeout, which *produces*
-  jerk; success → short clean trajectory → low jerk).
-
-**Verdict:** softmask's smoothness (robust, p≈1e-18) and its success blip
-(not significant) appear to be **independent effects** — there is no evidence the
-smoothness improves success. Report smoothness as the validated win and do *not*
-claim a success benefit. (Caveat: the success test is underpowered — 2 trials/env,
-noisy 5090 renders — so this is "no evidence of contribution," not "proven none.")
-
-### Inference cost & emulated latency (render-independent)
-
-The benchmark injects inference latency via `dt_scale` = (sim loop wall-time) /
-(control period, 0.04 s @ 25 Hz). The client paces itself (`sleep =
-inf·(dt_scale−1)`), which makes `dt_scale` **cancel**: the latency the policy
-actually experiences, in control steps, is `inference_time / control_period`
-(`inf/sim_dt`) — **independent of how fast the GPU renders the sim**. So `inf/sim_dt`,
-not `dt_scale`, is the meaningful (render-independent) latency number.
-
-Measured (5090 run, n_chunks 0.2–16k/mode):
-
-| mode     | avg inference | inf/sim_dt (latency, control steps) |
-|----------|---------------|-------------------------------------|
-| off      | 114 ms        | 2.8                                 |
-| softmask | 120 ms (+5%)  | 3.0                                 |
-| pigdm    | 281 ms (2.5×) | 7.0                                 |
-
-- **softmask adds negligible inference cost (~5%)** → essentially the same latency
-  as `off` (confirms the "no meaningful overhead" claim).
-- **pigdm's per-step autodiff makes it 2.5× slower → 2.5× more emulated latency**,
-  regardless of GPU — a real handicap and part of why it regresses.
-- `dt_scale` itself (~1.9–2.0 here) is **render-bound** (server-side) and cancels
-  out by design; it is *not* the policy's latency. (Hence it was similar across
-  modes despite pigdm's longer inference — in streaming the client computes the
-  next chunk while the server renders.)
-- **Caveat — shared-GPU coupling:** inference and rendering share the GPU, so
-  heavier clean rendering (denoiser) steals cycles from the model forward and
-  slows inference → more latency (e.g., cml18 clean run: inf ~0.41 s → ~10 steps).
-  Running the simulator and policy on separate GPUs (or the paper's A6000)
-  decouples them as the design intends.
-
-### How `Time` (and `Path Len`) are computed — and why they are render-fair
+## `Time` and `Path Len` — and why they are render-fair
 
 The eval loop (`evaluate.py`, `while sim_results["status"] == -1`) runs **one
 control step per iteration**, appending one `ee_path` entry per step. So:
@@ -300,34 +101,56 @@ Path Len = Σ ‖ ee_path[t+1] − ee_path[t] ‖   (meters)
   to inference, but the *recorded* time is always `n_steps × step_dt`.
 
 **Hardware fairness:** `Time`/`Path Len` are immune to **render/GPU-render speed**
-(the `dt_scale` cancellation — same principle as `inf/sim_dt`), but they
-**intentionally reflect inference latency**: a faster policy (lower `inf/sim_dt`)
-reacts sooner → completes in fewer steps and times-out less → lower `Time`. So the
-metrics are fair across render hardware while still crediting a faster model — by
-design. (This is why softmask's smoother, shorter paths give Path Len 2.60 vs 3.14
-m and Time 7.65 vs 8.07 s in our cross-machine run.)
+(the `dt_scale` cancellation — see below), but they **intentionally reflect
+inference latency**: a faster policy (lower `inf/sim_dt`) reacts sooner →
+completes in fewer steps and times-out less → lower `Time`. Fair across render
+hardware, while still crediting a faster model — by design.
 
-### RTC chunk split, measured (5090 softmask run)
+## Emulated latency: `dt_scale` vs `inf/sim_dt`
 
-The soft-mask weight schedule (the figure's guidance-weight curve) partitions the
-**H = 20**-action chunk into frozen / changeable / fresh. The frozen count `d`
-and the `overlap` are set **per inference** from the measured pipeline delay
-(logged via the `[RTC]` line in `_build_inpaint_target`):
+The benchmark injects inference latency via `dt_scale` = (sim loop wall-time) /
+(control period, 0.04 s). The client paces itself (`sleep = inf·(dt_scale−1)`),
+which makes `dt_scale` **cancel** in the latency the policy actually experiences:
 
-| region (figure)       | meaning                                          | measured (H=20) |
-|-----------------------|--------------------------------------------------|-----------------|
-| **frozen** (`d`)      | inference delay; weight = 1; executes as-is      | **≈ 6–7**       |
-| **changeable** (`H−d−s`) | overlaps prev chunk; exp-decay weight          | **≈ 4–10**      |
-| **fresh** (`s`)       | beyond prev chunk; weight = 0; freshly generated | **≈ 4–9**       |
+```
+sim steps elapsed per chunk = (inf·dt_scale) / (dt_scale·step_dt) = inf / step_dt
+```
 
-(varies chunk-to-chunk as the action queue drains; `overlap` = frozen+changeable
-≈ 11–16, logged `shift` ≈ 0.)
+So the **real, render-independent latency** the policy faces is `inf/sim_dt`
+(inference time in control-step units) — **not** `dt_scale`. Consequences:
 
-**Conclusion.** At the 5090's latency, only **~6–7 of the 20 actions are hard-frozen**;
-the rest of the chunk is dominated by the **exp-decay blend over the overlap** — so
-softmask's smoothing comes mostly from the soft blend, not the freeze. Note
-`d ≈ 6–7` exceeds the per-step `dt_scale ≈ 2` because `d = max recent
-skip_n_actions` measures the **full obs→compute→queue→execute pipeline depth**, not
-a single step. `d` scales with latency, so slower-inference machines (e.g. the
-cml18 clean run, ~10-step latency) produce a **larger** frozen region — being
-captured separately via the same `[RTC]` logging.
+- `dt_scale` is **render-bound** (server-side sim loop). Slow rendering raises it,
+  but it cancels — it is *not* the policy's latency.
+- `inf/sim_dt` is **inference-bound** and render-independent: a faster model → less
+  latency, regardless of GPU render speed.
+- **Caveat — shared-GPU coupling:** if inference and rendering share one GPU,
+  heavy (clean) rendering steals cycles from the model forward and slows
+  inference → more latency. Running sim and policy on **separate GPUs** restores
+  the intended decoupling.
+
+## RTC chunk-split: `frozen` / `changeable` / `fresh`
+
+The soft-mask schedule (the RTC guidance-weight curve) partitions the
+`H`-action chunk (`H` = `chunk_size` = 20) into three regions, logged per chunk by
+the `[RTC]` line in `_build_inpaint_target`:
+
+| region | weight | meaning |
+|---|---|---|
+| **frozen** (`d`) | 1 | inference delay; executes as-is |
+| **changeable** (`overlap − d`) | exp-decay | overlaps the previous chunk; soft-blended |
+| **fresh** (`H − overlap`) | 0 | beyond the previous chunk; freshly generated |
+
+with two runtime quantities:
+
+```
+overlap = h_prev − shift        # how many of the PREVIOUS chunk's actions are still queued
+d (frozen) = min(freeze, overlap)   # freeze = max recent skip_n_actions (full obs→compute→queue→execute pipeline depth)
+```
+
+**Key point:** `frozen` is **not** the inference delay — it is
+`min(delay, overlap)`. When the policy is slow relative to consumption, the action
+queue drains between chunks, the `overlap` collapses toward 0, and RTC degenerates
+to freezing only the few still-queued actions with **no** exp-decay blend. So RTC's
+soft-masking is **gated by latency**: it operates only when `inf/sim_dt` is low
+enough to keep meaningful overlap. (Measured per-regime values: see
+`INTRODUCTION.md`.)
