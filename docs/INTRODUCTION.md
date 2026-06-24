@@ -264,6 +264,79 @@ evaluation is a necessary gate beyond component tests.
 
 ---
 
+## DOM benchmark dimensions (what each tests)
+
+DOM evaluates **9 sub-dimensions** in 3 categories (paper Sec IV.B). Our tiers
+`1-1…3-3` map onto them in order; difficulty increases left→right within each.
+
+**Interaction — responding to evolving object motion**
+- **CR (1-1) Closed-loop Reactivity** — object moves at *different speeds*;
+  measures how quickly the robot adjusts → *fast low-latency closed-loop control.*
+- **DA (1-2) Dynamic Adaptation** — *abrupt direction shifts / unexpected
+  disturbances* → *online re-planning / recovery.*
+- **LS (1-3) Long-horizon Sequencing** — *extended interactions with multiple
+  moving objects*, prioritizing actions as events unfold → *sustained temporal
+  coordination.*
+
+**Perception — grounding visual + linguistic cues under motion**
+- **VU (2-1) Visual Understanding** — distinguish objects with *similar
+  shapes/textures/materials* → *fine-grained recognition + language grounding.*
+- **SR (2-2) Spatial Reasoning** — infer *positions & relative arrangements* in
+  cluttered/changing scenes → *spatial/relational reasoning.*
+- **MP (2-3) Motion Perception** — interpret *motion cues (speed, direction)* →
+  *velocity/trajectory perception.*
+
+**Generalization — transfer to novel objects/scenes/motion**
+- **VG (3-1) Visual Generalization** — *unseen shapes, appearances, layouts* →
+  *visual OOD generalization.*
+- **MG (3-2) Motion Generalization** — *new speed ranges, altered friction,
+  unseen trajectories* → *generalizing to unseen dynamics.*
+- **DR (3-3) Disturbance Robustness** — *external perturbations (pushes,
+  collisions, sensor noise)* → *robustness/stability under perturbation.*
+
+## Our Table-I reproduction (cross-machine clean + low-latency, 90 envs × 2 trials)
+
+Format matches the paper's Table I (per-dimension SR %, overall Avg SR, Path Len
+m, Time s). `off` = our reproduction of DynamicVLA; `softmask` = + RTC.
+
+| Method | CR | DA | LS | VU | SR | MP | VG | MG | DR | **Avg SR** | Path Len | Time |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **off (our DynamicVLA repro)** | 60.0 | 63.2 | 27.8 | 40.0 | 60.0 | 65.0 | 70.0 | 90.0 | 30.0 | **56.5** | 3.14 | 8.07 |
+| **softmask (RTC)** | 85.0 | 40.0 | 40.0 | 55.0 | 45.0 | 45.0 | 75.0 | 95.0 | 30.0 | **56.7** | 2.60 | 7.65 |
+| paper DynamicVLA | 60.5 | 38.5 | 40.5 | 51.5 | 48.0 | 33.5 | 59.5 | 65.0 | 26.5 | 47.06 | 2.50 | 8.53 |
+
+- **Our `off` reproduces / exceeds the paper** (56.5% vs 47.06%) once render
+  quality + latency are controlled (cross-machine: cml18 4090 sim + 5090 model).
+- **RTC keeps success flat (56.7%) but executes more efficiently:** Path Len
+  **2.60 vs 3.14 m (−17%)**, Time **7.65 vs 8.07 s (−5%)** — a direct consequence
+  of the −36% jerk (smoother = less wandering); both move *toward* the paper's
+  2.50 m / 8.53 s.
+- **Per-dimension swings are 2-trial noise** (granularity 0/0.5/1.0 per scene;
+  e.g. CR 60→85, DA 63→40). Only Avg SR / Path Len / Time over ~180 episodes are
+  stable. Trials: **2 (ours) vs 20 (paper)** — our SR is a higher-variance estimate.
+
+## Per-dimension demo videos (off vs RTC, both SUCCESS)
+
+One *both-success* scene per dimension (same scene for off vs RTC, so each pair is
+comparable), cross-machine clean render, in `output/dim-videos/`:
+
+| dim | scene | off video | softmask (RTC) video |
+|---|---|---|---|
+| CR | apple13d | `1-1_CR_off.mp4` | `1-1_CR_softmask.mp4` |
+| DA | beer07d | `1-2_DA_off.mp4` | `1-2_DA_softmask.mp4` |
+| LS | fcan03d (long-horizon) | `1-3_LS_off.mp4` | `1-3_LS_softmask.mp4` |
+| VU | beer09d | `2-1_VU_off.mp4` | `2-1_VU_softmask.mp4` |
+| SR | can12d | `2-2_SR_off.mp4` | `2-2_SR_softmask.mp4` |
+| MP | cup02d | `2-3_MP_off.mp4` | `2-3_MP_softmask.mp4` |
+| VG | apple99d | `3-1_VG_off.mp4` | `3-1_VG_softmask.mp4` |
+| MG | apple00d | `3-2_MG_off.mp4` | `3-2_MG_softmask.mp4` |
+| DR | beer13d | `3-3_DR_off.mp4` | `3-3_DR_softmask.mp4` |
+
+(18 clips; both modes succeed on each scene, so they show the *same task completed
+both ways* — RTC's value is the smoother/shorter path, not a different outcome.)
+
+---
+
 ### Citations
 - DynamicVLA & DOM: Xie et al., *DynamicVLA: A Vision-Language-Action Model for Dynamic Object Manipulation*, arXiv:2601.22153.
 - RTC: Black, Galliker, Levine, *Real-Time Execution of Action Chunking Flow Policies*, arXiv:2506.07339.
