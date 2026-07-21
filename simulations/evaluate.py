@@ -322,6 +322,16 @@ def simulate(env, obs_socket, act_socket, init_poses):
     rcv_action = False
     last_action = None
     sim_results = {"status": -1, "cam_views": [], "ee_path": []}
+    # Resolve the Franka Panda joint layout once: the articulation exposes
+    # panda_joint1..7 (arm, DIfferential-IK controlled) followed by the two
+    # panda_finger_joint* (gripper) DOFs. Indices are looked up by name (not
+    # hard-coded) so this stays correct if the USD's DOF order ever changes.
+    robot_joint_names = env.unwrapped.scene["robot"].data.joint_names
+    arm_joint_idx = [
+        robot_joint_names.index(n)
+        for n in sorted(n for n in robot_joint_names if "finger" not in n)
+    ]
+    gripper_joint_idx = [i for i, n in enumerate(robot_joint_names) if "finger" in n]
     # The simulation loop
     term_mgr = env.env.termination_manager
     done_term = configs.termination_cfg.get_done_term(term_mgr.active_terms)
@@ -332,7 +342,7 @@ def simulate(env, obs_socket, act_socket, init_poses):
         cam_view = sim.get_camera_views(env.unwrapped.scene.sensors, ["rgb"])
         curr_state = sim.get_curr_state(
             ee_state=env.unwrapped.scene["ee_frame"].data,
-            # robot_joint_pos=scene_state["articulation"]["robot"]["joint_position"],
+            robot_joint_pos=env.unwrapped.scene["robot"].data.joint_pos,
             object_state=env.unwrapped.scene["object"].data,
             env_origins=env.unwrapped.scene["robot"].data.root_pos_w,
             robot_quat=env.unwrapped.scene["robot"].data.root_quat_w,
@@ -340,6 +350,12 @@ def simulate(env, obs_socket, act_socket, init_poses):
         )
         sim_results["cam_views"].append(cam_view)
         sim_results["ee_path"].append(curr_state["end_effector"]["pos"].cpu().numpy())
+        # curr_state["joints"] is the full (num_envs, num_joints) articulation
+        # joint_pos tensor (radians for the 7 arm joints, meters for the 2
+        # finger joints). Slice it into the arm-only vector and a scalar
+        # gripper aperture (mean of the two mirrored finger joints, raw
+        # meters in [0, 0.04]) additively alongside the existing EEF pose.
+        joint_pos_np = curr_state["joints"].cpu().numpy()
         obs_socket.send_pyobj(
             {
                 "dt_scale": (
@@ -350,7 +366,13 @@ def simulate(env, obs_socket, act_socket, init_poses):
                     "end_effector": {
                         k: v.cpu().numpy()
                         for k, v in curr_state["end_effector"].items()
-                    }
+                    },
+                    "joint_position": joint_pos_np[:, arm_joint_idx].astype(
+                        np.float32
+                    ),
+                    "gripper": joint_pos_np[:, gripper_joint_idx]
+                    .mean(axis=1, keepdims=True)
+                    .astype(np.float32),
                 },
                 **{"observation.images.%s" % k: v["rgb"] for k, v in cam_view.items()},
             }
